@@ -1,0 +1,18 @@
+# secrets never live here, but if one ever lands by mistake it stays out
+.env
+.env.*
+history/
+
+node_modules/
+dist/
+release/
+*.log
+
+# build output: only the icon is source
+build/*
+!build/axive.ico
+!build/axive.png
+
+# test sandboxes and captured frames
+tools/**/node_modules/
+*.ansi

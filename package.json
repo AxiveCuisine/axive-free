@@ -1,0 +1,39 @@
+{
+  "name": "axive-free",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The fastest free video and file downloader for Windows Terminal: YouTube, TikTok, X, Instagram and 1,800+ sites up to 1080p, plus a 16-connection download manager.",
+  "homepage": "https://github.com/AxiveCuisine/axive-free",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AxiveCuisine/axive-free.git"
+  },
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "axive-free": "dist/axive.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/axive.mjs"
+  },
+  "dependencies": {
+    "ink": "^7.1.0",
+    "react": "^19.2.7",
+    "slice-ansi": "^9.0.0",
+    "string-width": "^8.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
