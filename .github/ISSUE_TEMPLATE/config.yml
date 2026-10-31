@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The full Axive (licences, payments, refunds)
+    url: https://axive.xyz/terms/#contact
+    about: This repository holds only Axive Free. Questions about buying Axive belong on its site, not in a public issue.

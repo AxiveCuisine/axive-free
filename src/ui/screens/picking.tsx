@@ -83,7 +83,8 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
   // several audio tracks (YouTube dubs): the original first; another one is chosen with the "sound" button
   const tracks = useMemo(() => audioTracks(info), [info])
   const [trackIndex, setTrackIndex] = useState(0)
-  const track = trackIndex > 0 ? tracks[trackIndex] : undefined
+  // the draw names its track even when it is the first one, so it is that track and no other
+  const track = tracks[trackIndex]
   const duplicate = config.warnDuplicates ? findDuplicate(info.extractor_key?.toLowerCase(), info.id, probe.url) : undefined
   const duplicateExists = duplicate?.filepath ? fs.existsSync(duplicate.filepath) : false
   const contentWidth = Math.max(40, Math.min(columns - 4, 100))
@@ -153,7 +154,7 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
               ) : null}
             </Box>
           ) : null}
-          {tracks.length > 1 ? <Text color={track ? theme.accent : theme.gray}>{`${G.audio} sound: ${trackLabel(tracks[trackIndex]!)}${track ? '' : ` · ${tracks.length} tracks`}`}</Text> : null}
+          {tracks.length > 1 ? <Text color={trackIndex > 0 ? theme.accent : theme.gray}>{`${G.audio} sound: ${trackLabel(tracks[trackIndex]!)}${trackIndex > 0 ? '' : ` · ${tracks.length} tracks`}`}</Text> : null}
         </Box>
         <Panel title="Vessels" width={42}>
           <List

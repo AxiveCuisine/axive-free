@@ -88,13 +88,35 @@ export type Vigil = {id: string; url: string; title: string; folder: string; ves
 export type Task = {id: string; kind: string; file: string; label: string; fraction: number; state: 'running' | 'done' | 'failed'; output?: string; error?: string}
 export type Repair = {state: 'idle' | 'checking' | 'repairing' | 'done' | 'failed'; carries: boolean; health?: {name: string; ok: boolean; reason?: string}[]; label?: string; done?: number; total?: number; error?: string}
 export type Meta = {kind: 'bool' | 'enum' | 'int' | 'string' | 'list' | 'json'; label: string; help: string; options?: string[]; min?: number; max?: number; secret?: boolean; section?: string}
-export type Phone = {on: boolean; starting: boolean; lanUrl?: string; pairUrl?: string; svg?: string; rows?: string[]; network?: {name: string; category?: string}; note?: string; firewall?: 'open' | 'closed' | 'unknown'; firewallWhy?: 'no-rule' | 'other-port' | 'blocked' | 'policy'; guards?: string[]; answers?: boolean; seenAt?: number; checkedAt?: number; checking?: boolean; error?: string}
+export type Phone = {on: boolean; starting: boolean; lanUrl?: string; pairUrl?: string; svg?: string; rows?: string[]; network?: {name: string; category?: string}; note?: string; firewall?: 'open' | 'closed' | 'unknown'; firewallWhy?: 'no-rule' | 'other-port' | 'disabled' | 'scope' | 'blocked' | 'blocked-other' | 'shield' | 'policy' | 'maybe'; firewallOff?: boolean; firewallRule?: string; guards?: string[]; answers?: boolean; seenAt?: number; reachedAt?: number; checkedAt?: number; checking?: boolean; error?: string}
 export type Schedule = {on: boolean; days: number[]; start?: string; stop?: string}
 export type Queue = {id: string; name: string; maxConcurrent: number; speedLimit: string; schedule: Schedule; after: 'none' | 'notify' | 'quit' | 'sleep' | 'hibernate' | 'shutdown'; open?: boolean; running?: number; pending?: number; nextStart?: number; nextStop?: number}
 export type Category = {id: string; name: string; exts: string[]; patterns: string[]; folder: string}
 export type HostRule = {host: string; connections?: number; speedLimit?: string; userAgent?: string; referer?: string; user?: string; hasPassword?: boolean}
 export type Power = {action: 'quit' | 'sleep' | 'hibernate' | 'shutdown'; at: number; queueId?: string}
 export type Limits = {profile: string; global: number; present?: boolean; busy?: boolean}
+export type SpotifyAccount = {connected: boolean; clientId?: string; name?: string; redirect: string; signingIn: boolean}
+/** what one collection's import found and did (spotify-record.ts) */
+export type SpotifyReport = {
+  label: string
+  folder: string
+  total: number
+  read: number
+  songs: number
+  kept: number
+  queued: number
+  missing: number
+  again: number
+  waiting: number
+  duplicates: number
+  gone: number
+  leftOut: {local: number; episodes: number; unavailable: number}
+  overLimit: number
+  renamed?: string
+  note?: string
+  error?: string
+}
+export type SpotifyRun = {running: boolean; folder: string; chosen: number; reading?: string; done: SpotifyReport[]; queued: number; limit: number; stopped?: 'asked' | 'account' | 'limit'; at: number}
 
 export type State = {
   connected: boolean
@@ -126,6 +148,8 @@ export type State = {
   repair?: Repair
   recent: string[]
   notice?: {id: number; text: string; tone: 'info' | 'ok' | 'warn' | 'error'} | null
+  /** Axive only: the Spotify account (never a token) and the library import being read */
+  spotify?: {account: SpotifyAccount; run: SpotifyRun | null}
   host: boolean
   navigate?: {offer: string; at: number}
 }
@@ -212,7 +236,7 @@ export function connect(): void {
     return data === 'undefined' ? null : JSON.parse(data)
   }
   source.addEventListener('state', e => set({...(read(e) as State), connected: true}))
-  for (const part of ['jobs', 'fetch', 'config', 'ledger', 'list', 'ui', 'offerings', 'vigils', 'ghost', 'remote', 'phone', 'door', 'queues', 'power', 'limits', 'history', 'awaiting', 'tasks', 'repair', 'setup', 'licence', 'notice', 'recent'] as const) {
+  for (const part of ['jobs', 'fetch', 'config', 'ledger', 'list', 'ui', 'offerings', 'vigils', 'ghost', 'remote', 'phone', 'door', 'queues', 'power', 'limits', 'history', 'awaiting', 'tasks', 'repair', 'setup', 'licence', 'notice', 'recent', 'spotify'] as const) {
     source.addEventListener(part, e => {
       try {
         set({[part]: read(e)} as Partial<State>)

@@ -32,7 +32,8 @@ test('each resolution gets its own filename', () => {
 test('video choices ask yt-dlp for the most compatible codecs at full resolution', () => {
   const [p1080] = buildChoices(info)
   const sort = p1080!.args[p1080!.args.indexOf('-S') + 1]
-  assert.equal(sort, 'res,vcodec:h264,acodec:aac')
+  // the original audio before a dub's AAC: yt-dlp ranks the user's -S above its own language preference
+  assert.equal(sort, 'res,lang,vcodec:h264,acodec:aac')
 })
 
 test('removePartials: a draw cancelled mid-merge leaves nothing of its own behind', async () => {

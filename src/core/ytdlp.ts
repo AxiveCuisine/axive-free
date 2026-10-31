@@ -267,23 +267,31 @@ export type DownloadChoice = {
   /** estimated bytes, when known */
   size?: number
   height?: number
-  /** the audio track chosen (an AudioTrack id), when the video had several */
+  /**
+   * the audio track chosen (an AudioTrack id), when the video had several.
+   * `args` stay the plain vessel: every draw and dry run holds the audio to
+   * this track's own formats in the very info it loads (`pinTrack`).
+   */
   audioTrack?: string
 }
 
+
 const MAX_VIDEO_CHOICES = 8
 
-// highest resolution first, then H.264 + AAC where the site offers them — an
-// mp4 that plays everywhere, not AV1/Opus that many players still refuse
-const COMPATIBLE_SORT = ['-S', 'res,vcodec:h264,acodec:aac']
+// highest resolution first, the original audio before dubs (yt-dlp's own
+// language preference), then H.264 + AAC where the site offers them — an mp4
+// that plays everywhere, not AV1/Opus that many players still refuse
+const COMPATIBLE_SORT = ['-S', 'res,lang,vcodec:h264,acodec:aac']
 
 export const videoArgs = (height?: number): string[] =>
   height
     ? ['-f', `bv*[height=${height}]+ba/b[height=${height}]/bv*[height<=${height}]+ba/b`, ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
     : ['-f', 'bv*+ba/b', ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
 
-export const AUDIO_MP3 = ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0']
-export const AUDIO_M4A = ['-f', 'ba[ext=m4a]/ba/b', '-x', '--audio-format', 'm4a']
+// a draw nobody chose a track for takes the original, as the track list says it would; m4a is
+// preferred, not required, so an original without an m4a stream is converted, not swapped for a dub
+export const AUDIO_MP3 = ['-f', 'ba/b', '-S', 'lang', '-x', '--audio-format', 'mp3', '--audio-quality', '0']
+export const AUDIO_M4A = ['-f', 'ba/b', '-S', 'lang,aext:m4a', '-x', '--audio-format', 'm4a']
 
 /** Best ≤ height, for batches and playlists where each item differs. */
 export function capChoice(height: number | 'best' | 'mp3' | 'm4a'): DownloadChoice {
@@ -306,7 +314,11 @@ export type AudioTrackKind = 'original' | 'dubbed' | 'auto-dubbed' | 'descriptiv
 
 /** One audio track a video offers, as yt-dlp describes it. Only what the metadata says: an unmarked track is 'other', never guessed "dubbed". */
 export type AudioTrack = {
-  /** the language, plus "~descriptive" for the described one: what the format filter selects */
+  /**
+   * the same for every look at the video: its language (yt-dlp writes
+   * "en-desc" for a track YouTube calls descriptive), "~desc" for one described
+   * in other words, and "~<name>" when one language has several tracks
+   */
   id: string
   language: string
   /** "English (US)", "French": YouTube's own name, else the language's */
@@ -324,59 +336,111 @@ const languageNames = (() => {
   }
 })()
 
-function trackKind(f: RawFormat): AudioTrackKind {
-  const note = f.format_note ?? ''
-  if (/descriptive|audio description/i.test(note)) return 'descriptive'
-  if (/dubbed[- ]auto|auto[- ]?dubbed/i.test(note)) return 'auto-dubbed'
-  if (/dubbed/i.test(note)) return 'dubbed'
-  if (f.language_preference === 10 || /\boriginal\b/i.test(note)) return 'original'
-  return 'other'
-}
+const isAudioOnly = (f: RawFormat) => Boolean(f.acodec) && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')
+// yt-dlp's marks: -10 and "-desc" for described, 10 the original, 5 the default (extractor/youtube/_video.py)
+const describes = (f: RawFormat) => /-desc$/i.test(f.language ?? '') || f.language_preference === -10 || /descriptive|audio description/i.test(f.format_note ?? '')
 
-function trackName(f: RawFormat): string {
-  // "English (US) original (default), low" → "English (US)"
-  const fromNote = (f.format_note ?? '')
+/** The track's own name in a format's note, as one track's formats all share it: "English (US) original (default), medium" → "English (US)". */
+function noteName(f: RawFormat): string {
+  const name = (f.format_note ?? '')
     .split(',')[0]!
-    .replace(/\((default|original|dubbed-auto|dubbed|descriptive)\)/gi, '')
-    .replace(/\b(original|default|dubbed-auto|dubbed|descriptive)\b/gi, '')
+    .replace(/\((default|original)\)/gi, '')
+    .replace(/\b(original|default)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
-  if (fromNote && !/^(low|medium|high|ultralow|tiny)$/i.test(fromNote)) return fromNote
+  return /^(low|medium|high|ultralow|tiny)?$/i.test(name) ? '' : name
+}
+
+function languageName(language: string): string {
+  const code = language.replace(/-desc$/i, '')
   try {
-    return languageNames?.of(f.language!) ?? f.language!
+    return languageNames?.of(code) ?? code
   } catch {
-    return f.language!
+    return code
+  }
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '') || [...name].map(c => c.codePointAt(0)!.toString(36)).join('')
+
+type Grouped = AudioTrack & {formats: string[]}
+
+/** `evidence`: more formats known to be this track (their words count for the kind, never for the name or the draw). */
+function describeTrack(id: string, formats: RawFormat[], evidence: RawFormat[] = []): Grouped {
+  const notes = [...formats, ...evidence].map(f => f.format_note ?? '')
+  const kind: AudioTrackKind = formats.some(describes)
+    ? 'descriptive'
+    : notes.some(n => /dubbed[- ]auto|auto[- ]?dubbed/i.test(n))
+      ? 'auto-dubbed'
+      : notes.some(n => /dubbed/i.test(n))
+        ? 'dubbed'
+        : formats.some(f => f.language_preference === 10) || notes.some(n => /\boriginal\b/i.test(n))
+          ? 'original'
+          : 'other'
+  // what the label says already ("dubbed", "descriptive") is the kind's word, not the name's
+  const named = formats
+    .map(noteName)
+    .find(Boolean)
+    ?.replace(/\((dubbed-auto|auto-dubbed|dubbed|descriptive|audio description)\)|\b(dubbed-auto|auto-dubbed|dubbed|descriptive|audio description)\b/gi, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const language = formats[0]!.language!
+  return {
+    id,
+    language,
+    name: named || languageName(language),
+    kind,
+    isDefault: formats.some(f => f.language_preference === 5) || notes.some(n => /\(default\)/i.test(n)),
+    formats: formats.map(f => f.format_id),
   }
 }
 
 /**
- * The audio tracks of a video: one per language (a described one apart),
- * the original first, then the default, then by name. Empty when there is
- * only one: then nothing needs choosing.
+ * Every audio track in this info, with the exact formats that carry it.
+ * Grouped by yt-dlp's own `language`; a language whose formats name more than
+ * one track (two dubs, a description in words yt-dlp does not mark) is split
+ * by name, and a format of it that names none is left out: never a format
+ * whose track is not known. YouTube's HLS copies name no codec and use other
+ * names ("Deutsch - dubbed"): they are not drawn from, and their words only
+ * tell the kind of a language's one track.
  */
-export function audioTracks(info: VideoInfo): AudioTrack[] {
-  const byId = new Map<string, AudioTrack>()
+function groupTracks(info: VideoInfo): Grouped[] {
+  const byBase = new Map<string, RawFormat[]>()
+  const copies = new Map<string, RawFormat[]>()
   for (const f of info.formats ?? []) {
-    if (!f.language || !f.acodec || f.acodec === 'none' || (f.vcodec && f.vcodec !== 'none')) continue
-    const kind = trackKind(f)
-    const id = kind === 'descriptive' ? `${f.language}~descriptive` : f.language
-    const isDefault = /\bdefault\b/i.test(f.format_note ?? '')
-    const known = byId.get(id)
-    if (known) {
-      // the strongest word any of its formats carries
-      if (known.kind === 'other' && kind !== 'other') known.kind = kind
-      known.isDefault ||= isDefault
+    if (!f.language || (f.vcodec && f.vcodec !== 'none') || f.acodec === 'none') continue
+    const base = describes(f) && !/-desc$/i.test(f.language) ? `${f.language}~desc` : f.language
+    const into = isAudioOnly(f) ? byBase : copies
+    into.set(base, [...(into.get(base) ?? []), f])
+  }
+  const tracks: Grouped[] = []
+  for (const [base, formats] of byBase) {
+    const names = [...new Set(formats.map(noteName).filter(Boolean))]
+    if (names.length < 2) {
+      tracks.push(describeTrack(base, formats, copies.get(base)))
       continue
     }
-    byId.set(id, {id, language: f.language, name: trackName(f), kind, isDefault})
+    for (const name of names) {
+      let id = `${base}~${slug(name)}`
+      while (tracks.some(t => t.id === id)) id += '-'
+      tracks.push(describeTrack(id, formats.filter(f => noteName(f) === name)))
+    }
   }
-  const tracks = [...byId.values()]
+  return tracks
+}
+
+/**
+ * The audio tracks of a video: the original first, then the default, then by
+ * name. Empty when there is only one: then nothing needs choosing.
+ */
+export function audioTracks(info: VideoInfo): AudioTrack[] {
+  const tracks = groupTracks(info).map(({formats: _formats, ...track}) => track)
   if (tracks.length < 2) return []
   const rank = (t: AudioTrack) => (t.kind === 'original' ? 0 : t.isDefault ? 1 : 2)
   return tracks.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
 }
 
-/** The track a draw takes when nobody chooses: the original, else YouTube's default. */
+/** The track a draw takes when nobody chooses: the original, else YouTube's default (what yt-dlp's language preference picks too). */
 export const defaultAudioTrack = (tracks: AudioTrack[]): AudioTrack | undefined => tracks.find(t => t.kind === 'original') ?? tracks.find(t => t.isDefault) ?? tracks[0]
 
 /** A plain description of a track, for labels: "French · dubbed", "English (US) · original". */
@@ -385,37 +449,64 @@ export function trackLabel(track: AudioTrack): string {
   return word ? `${track.name} · ${word}` : track.name
 }
 
-/** yt-dlp's format filter for one track: its language, and described or not. */
-function trackFilter(track: AudioTrack): string {
-  const language = track.language.replace(/[^\w-]/g, '')
-  return `[language=${language}][format_note${track.kind === 'descriptive' ? '' : '!'}*=descriptive]`
-}
-
 /**
- * The same vessel, with this audio track. Every audio selector gets the
- * track's filter, and the fallbacks that could bring another language (a
- * single file with its own sound) are dropped: when the track is gone, the
- * draw fails and says so instead of drawing another language.
+ * The same vessel, named for this audio track. The track is held to its own
+ * formats when the draw starts (`pinTrack`), the original's too: a draw never
+ * takes another language because it was chosen by default.
  */
 export function withAudioTrack(choice: DownloadChoice, track: AudioTrack): DownloadChoice {
   if (choice.kind !== 'video' && choice.kind !== 'audio') return choice
-  const at = choice.args.indexOf('-f')
-  if (at < 0) return choice
-  const filter = trackFilter(track)
-  const spec = choice.args[at + 1]!
+  const tag = track.id
+    .replace(/-desc(?=~|$)|~desc(?=~|$)/, ' described')
+    .replace(/~/g, ' ')
+    .replace(/[^\p{L}\p{N} -]/gu, '')
+  return {...choice, label: `${choice.label} · ${trackLabel(track)} audio`, suffix: `${choice.suffix} [${tag}]`, audioTrack: track.id}
+}
+
+/**
+ * The -f spec with every audio selector held to one track's own formats in
+ * this info (their exact ids: yt-dlp numbers them per look, so only the info
+ * the draw loads can say which they are), and without what could bring other
+ * sound: a single file's own audio, or a video stream that carries some.
+ * Undefined when this info has no such track.
+ */
+export function pinTrack(args: string[], info: VideoInfo, trackId: string): string[] | undefined {
+  const ids = groupTracks(info)
+    .find(t => t.id === trackId)
+    ?.formats.filter(id => /^[\w.=:@~-]+$/.test(id))
+  const at = args.indexOf('-f')
+  if (!ids?.length || at < 0) return undefined
+  const only = `[format_id~='^(?:${ids.map(id => id.replace(/\./g, '\\.')).join('|')})$']`
+  const spec = args[at + 1]!
     .split('/')
     .filter(alt => /(^|\+)ba(\*|\[|$)/.test(alt))
-    .map(alt => alt.replace(/(^|\+)ba(\*?)((?:\[[^\]]*\])*)/g, (_, lead: string, star: string, filters: string) => `${lead}ba${star}${filters}${filter}`))
+    .map(alt => alt.replace(/(^|\+)ba\*?((?:\[[^\]]*\])*)/g, (_, lead: string, filters: string) => `${lead}ba${filters}${only}`).replace(/(^|\+)bv\*/g, '$1bv'))
     .join('/')
-  if (!spec) return choice
-  const args = [...choice.args]
-  args[at + 1] = spec
-  const tag = `${track.language}${track.kind === 'descriptive' ? ' described' : ''}`
-  return {...choice, args, label: `${choice.label} · ${trackLabel(track)} audio`, suffix: `${choice.suffix} [${tag}]`, audioTrack: track.id}
+  if (!spec) return undefined
+  const pinned = [...args]
+  pinned[at + 1] = spec
+  return pinned
 }
 
 /** yt-dlp's words for a vanished track, in Axive's. */
 export const TRACK_GONE = 'that audio track is not offered for this video any more. offer the link again and choose another'
+
+/** A chosen track this look at the video does not offer: said as such, never drawn in another language. */
+export class TrackGoneError extends Error {
+  constructor() {
+    super(TRACK_GONE)
+  }
+}
+
+/** The vessel's arguments for the info a draw loads: a chosen track pinned, or TrackGoneError. */
+async function vesselArgs(choice: DownloadChoice, infoJsonPath: string | undefined): Promise<string[]> {
+  if (!choice.audioTrack) return choice.args
+  if (!infoJsonPath) throw new TrackGoneError()
+  const info = JSON.parse(await fs.readFile(infoJsonPath, 'utf8')) as VideoInfo
+  const pinned = pinTrack(choice.args, info, choice.audioTrack)
+  if (!pinned) throw new TrackGoneError()
+  return pinned
+}
 
 export function buildChoices(info: VideoInfo): DownloadChoice[] {
   const formats = info.formats ?? []
@@ -532,7 +623,7 @@ export function postArgs(choice: DownloadChoice, config: Config = getConfig()): 
   return args
 }
 
-export function download(
+export async function download(
   opts: {
     tools: Tools
     url: string
@@ -554,13 +645,14 @@ export function download(
   const config = getConfig()
   const {choice} = opts
   const archive = opts.archive === false ? undefined : opts.archive ?? (config.skipArchived ? paths.archive : undefined)
+  const vessel = await vesselArgs(choice, opts.infoJsonPath)
   const args = [
     ...sharedArgs(opts.tools),
     ...RETRY_ARGS,
     ...(config.rateLimit ? ['--limit-rate', config.rateLimit] : []),
     ...(archive ? ['--download-archive', archive] : []),
     ...(opts.infoJsonPath ? ['--load-info-json', opts.infoJsonPath] : []),
-    ...choice.args,
+    ...vessel,
     ...postArgs(choice, config),
     ...(opts.extraArgs ?? []),
     // HLS/DASH fragments in parallel; single-file formats are unaffected

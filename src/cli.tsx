@@ -23,7 +23,7 @@ import {renewYtdlp} from './core/update.js'
 import {captureFrames} from './ui/frames.js'
 
 const HELP = `
-  axive free · the fastest free video and file downloader for Windows, in a window or the terminal.
+  axive free · a free video and file downloader for Windows, in a window or the terminal.
 
   Usage
     axive-free                       open Axive Free in the terminal (a double-click opens the window)

@@ -16,7 +16,9 @@ import {
   CancelledError,
   TRACK_GONE,
   ToolError,
+  TrackGoneError,
   download,
+  probe,
   removePartials,
   type DownloadChoice,
   type DownloadProgress,
@@ -138,16 +140,23 @@ async function runJob(id: string): Promise<void> {
     let skipped = false
     const choice = job.choice
     {
-      const infoJson = job.infoJsonPath && fs.existsSync(job.infoJsonPath) ? job.infoJsonPath : undefined
+      // a chosen audio track is held to the formats of the very look the draw loads: without one (after a
+      // restart, or a cold link), Axive looks again first, and the track must be in that look
+      const look = async () => {
+        const probed = await probe(t, job.url, controller.signal, id)
+        if (probed.kind !== 'video') throw new TrackGoneError()
+        return probed.infoJsonPath
+      }
+      const infoJson = job.infoJsonPath && fs.existsSync(job.infoJsonPath) ? job.infoJsonPath : choice.audioTrack ? await look() : undefined
       const base = {tools: t, url: job.url, choice, outDir: job.folder, job: id, extraArgs: limitArgs()}
       let result
       try {
         result = await download({...base, infoJsonPath: infoJson}, handlers, controller.signal)
       } catch (error) {
-        if (controller.signal.aborted || !infoJson) throw error
+        if (controller.signal.aborted || !infoJson || error instanceof TrackGoneError) throw error
         // media links inside the cached probe expire: draw once more from a fresh look
         update(id, {stage: 'the link went cold, drawing a fresh one', progress: undefined})
-        result = await download(base, handlers, controller.signal)
+        result = await download({...base, infoJsonPath: choice.audioTrack ? await look() : undefined}, handlers, controller.signal)
       }
       filepath = result.filepath
       skipped = Boolean(result.skipped)
@@ -176,7 +185,8 @@ async function runJob(id: string): Promise<void> {
     }
     const found = classify(error)
     // a chosen audio track that is gone fails as such, never as another language
-    const classified = found.kind === 'format' && job.choice.audioTrack ? {...found, title: 'that audio track is not offered', detail: TRACK_GONE} : found
+    const classified =
+      job.choice.audioTrack && (found.kind === 'format' || error instanceof TrackGoneError) ? {...found, kind: 'format' as const, transient: false, title: 'that audio track is not offered', detail: TRACK_GONE} : found
     const latest = getJob(id)!
     if (classified.transient && latest.attempt <= getConfig().retries) {
       const wait = backoffMs(latest.attempt, classified.kind)

@@ -50,7 +50,7 @@ import {openPath, revealPath} from '../core/reveal.js'
 import {createStore} from '../core/store.js'
 import {checkTools, forgetTools, hostIntact, installTools, itemIntact, needsSetup, payload, payloadNamesExcept, resolveTools, tools, verifyTools, whenToolsReady, windowExe, type ToolHealth} from '../core/tools.js'
 import {checkForUpdates, renewYtdlp} from '../core/update.js'
-import {audioTracks, buildChoices, capChoice, probe, removePartials, trackLabel, withAudioTrack, type AudioTrack, type DownloadChoice, type VideoInfo} from '../core/ytdlp.js'
+import {audioTracks, buildChoices, capChoice, defaultAudioTrack, probe, removePartials, trackLabel, withAudioTrack, type AudioTrack, type DownloadChoice, type VideoInfo} from '../core/ytdlp.js'
 import {startGuiServer, type GuiServer} from './server.js'
 
 /**
@@ -75,14 +75,17 @@ const say = (text: string, tone: Notice['tone'] = 'info') => noticeStore.set({id
 
 // what a probe found, kept here; the window only ever sees an id and a summary
 const probes = new Map<string, {url: string; info: VideoInfo; infoJsonPath: string; choices: DownloadChoice[]; tracks: AudioTrack[]}>()
-/** the vessel with the audio track asked for: a track the video does not offer is refused, never swapped */
+/**
+ * The vessel with the audio track asked for: a track the video does not offer
+ * is refused, never swapped. With several tracks every draw names one, the
+ * original too (none asked: the one the list shows first).
+ */
 function chosenVessel(lot: {choices: DownloadChoice[]; tracks: AudioTrack[]}, index: unknown, track: unknown): DownloadChoice | undefined {
   const choice = lot.choices[num(index) ?? -1]
-  if (!choice || !track) return choice
-  const found = lot.tracks.find(t => t.id === str(track, 80))
+  if (!choice || !lot.tracks.length || (choice.kind !== 'video' && choice.kind !== 'audio')) return choice
+  const found = track ? lot.tracks.find(t => t.id === str(track, 160)) : defaultAudioTrack(lot.tracks)
   if (!found) throw new Error('that audio track is not offered for this video')
-  // the original is what a draw takes anyway: no filter, so a plain draw stays a plain draw
-  return found === lot.tracks[0] ? choice : withAudioTrack(choice, found)
+  return withAudioTrack(choice, found)
 }
 const newId = () => crypto.randomBytes(6).toString('base64url')
 /** what Free leaves to Axive, said where it is met */

@@ -2,14 +2,17 @@ import React, {useEffect, useState} from 'react'
 import {attempt, call, say, setConfig, t, useAxive} from '../state.js'
 import {Button, Scrambled, Title, Toggle} from '../ui.js'
 
-type Asked = {ok: boolean; why?: 'declined' | 'failed' | 'policy'}
+type Asked = {ok: boolean; why?: 'declined' | 'failed' | 'policy' | 'shield' | 'blocked-other'; unverified?: boolean}
 
-/** What asking Windows came to, in a sentence. */
+/** What asking Windows came to, in a sentence: a rule is not a phone getting through, so none of these says it did. */
 function sayAsked(r: Asked | undefined) {
   if (!r) return
-  if (r.ok) return say('Windows Firewall now lets phones on this network reach Axive: scan the code', 'ok')
+  if (r.ok && r.unverified) return say('the rule is made, but Windows did not say whether it applies here. scan the code to try from your phone', 'warn')
+  if (r.ok) return say('Windows Firewall now has a rule for phones on this network. scan the code: the last line shows when your phone gets through', 'ok')
   if (r.why === 'declined') return say('the Windows prompt was declined, so nothing changed. press "set up Windows Firewall" to be asked again', 'warn')
-  if (r.why === 'policy') return say('this PC follows a policy that ignores rules made here: ask whoever manages it', 'warn')
+  if (r.why === 'policy') return say('this PC follows a policy that decides its firewall: ask whoever manages it', 'warn')
+  if (r.why === 'shield') return say('Windows Firewall blocks all incoming connections on this network. Axive leaves that setting to you', 'warn')
+  if (r.why === 'blocked-other') return say('a firewall rule that Axive did not make still blocks the phone port. Axive leaves it alone', 'warn')
   say('Windows did not make the rule. try again, or open "Windows Defender Firewall" and allow Axive there', 'warn')
 }
 
@@ -51,18 +54,31 @@ export function PhoneView() {
   const host = phone.lanUrl?.replace(/^http:\/\/([^/]+)\/.*/, '$1')
   const firewallLine =
     phone.firewall === 'open'
-      ? 'Windows Firewall lets devices on this network reach Axive’s phone port'
+      ? phone.firewallOff
+        ? 'Windows Firewall is off on this network'
+        : 'a Windows Firewall rule lets devices on this network reach Axive’s phone port'
       : phone.firewall === 'closed'
         ? phone.firewallWhy === 'blocked'
           ? 'Windows Firewall holds a block rule for Axive'
-          : phone.firewallWhy === 'other-port'
-            ? 'Windows Firewall has an Axive rule for another port'
-            : phone.firewallWhy === 'policy'
-              ? 'a policy on this PC ignores firewall rules made here'
-              : 'Windows Firewall has no rule for Axive yet'
+          : phone.firewallWhy === 'blocked-other'
+            ? 'a Windows Firewall rule Axive did not make blocks the phone port'
+            : phone.firewallWhy === 'other-port'
+              ? 'Windows Firewall has an Axive rule for another port'
+              : phone.firewallWhy === 'disabled'
+                ? 'Axive’s firewall rule is turned off'
+                : phone.firewallWhy === 'scope'
+                  ? 'Axive’s firewall rule does not cover this network'
+                  : phone.firewallWhy === 'shield'
+                    ? 'Windows Firewall blocks all incoming connections here'
+                    : phone.firewallWhy === 'policy'
+                      ? 'a policy decides this PC’s firewall'
+                      : 'Windows Firewall has no rule for Axive yet'
         : phone.checking
           ? 'asking Windows…'
-          : 'Windows did not say how its firewall treats Axive'
+          : phone.firewallWhy === 'maybe'
+            ? 'Windows Firewall rules may or may not let your phone in'
+            : 'Windows did not say how its firewall treats Axive'
+  const asksNothing = phone.firewallWhy === 'policy' || phone.firewallWhy === 'shield' || phone.firewallWhy === 'blocked-other'
 
   return (
     <div className="view phone-view">
@@ -108,7 +124,7 @@ export function PhoneView() {
                   const r = await attempt(() => call<{firewall?: string; asked?: Asked}>('phone-open', {firewall: true}))
                   setAsking(false)
                   if (r?.asked) sayAsked(r.asked)
-                  else if (r?.firewall === 'open') say('your phone can reach Axive now: scan the code', 'ok')
+                  else if (r?.firewall === 'open') say('the firewall looks open for phones on this network: scan the code to try', 'ok')
                 })()
               }
               hint="turn the phone page on or off; Windows may ask once to let phones through its firewall"
@@ -131,18 +147,24 @@ export function PhoneView() {
                   <span>
                     {t(firewallLine)}
                     {phone.network?.category ? <span className="meta"> · {t(`${phone.network.category === 'Public' ? 'public' : phone.network.category === 'Private' ? 'private' : 'work'} network`)}</span> : null}
+                    {phone.firewallRule && phone.firewall !== 'open' ? <span className="meta"> · {phone.firewallRule}</span> : null}
+                    <span className="meta"> · {t('read from this PC')}</span>
                   </span>
                 </li>
                 <li className={phone.seenAt ? 'yes' : ''}>
                   <span className="mark" aria-hidden>{phone.seenAt ? '∴' : '·'}</span>
                   <span>
-                    {phone.seenAt ? t(`a device on your network reached Axive ${ago(phone.seenAt)}`) : t('waiting for your phone: this line changes when it gets through')}
+                    {phone.seenAt
+                      ? t(`a device with the code reached Axive ${ago(phone.seenAt)}`)
+                      : phone.reachedAt
+                        ? t(`a device reached Axive ${ago(phone.reachedAt)}, but without the current code: scan it again`)
+                        : t('waiting for your phone: this line changes when it gets through')}
                   </span>
                 </li>
               </ul>
               {phone.note ? <p className="note-text">{t(phone.note)}</p> : null}
               <div className="row-gap">
-                {phone.firewallWhy !== 'policy' ? (
+                {!asksNothing ? (
                   <Button
                     icon="shield"
                     kind={phone.firewall === 'open' ? 'plain' : 'primary'}

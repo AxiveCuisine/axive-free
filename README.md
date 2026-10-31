@@ -55,12 +55,12 @@ Most downloaders pull a file through one connection. Axive Free uses the tools b
 ## Get started
 
 1. Download **`Axive-Free.exe`** from the [latest release](https://github.com/AxiveCuisine/axive-free/releases/latest).
-2. Double-click it. The first launch unpacks its tools (about 20 seconds) and opens the window.
+2. Double-click it. The first launch unpacks the tools it carries and checks each one (a few seconds, longer while an antivirus looks at them), then opens the window.
 3. Paste a link (or drop one on the window) and press Enter.
 
-Windows 10 or 11, 64-bit. Nothing else to install: yt-dlp, FFmpeg and aria2 travel inside the exe. The window uses Microsoft Edge WebView2, which Windows 10 and 11 already have; without it, the window opens in Edge instead.
+Windows 10 or 11, 64-bit. The exe is about 225 MB; with its tools unpacked it takes about 550 MB on disk. Nothing else to install: yt-dlp, FFmpeg and aria2 travel inside the exe. The window uses Microsoft Edge WebView2, which Windows 10 and 11 already have; without it, the window opens in Edge instead.
 
-> **SmartScreen.** The exe is not code-signed, so Windows may say it "protected your PC" the first time. Choose **More info › Run anyway**. Every release lists the SHA-256 of the exe so you can check it is the file built here.
+> **SmartScreen.** The exe is not code-signed, so Windows may say it "protected your PC" the first time. Choose **More info › Run anyway**. Every release lists the SHA-256 of its exe, so you can check that the file you have is the one published there: `Get-FileHash .\Axive-Free.exe` in PowerShell.
 
 From PowerShell:
 
@@ -151,4 +151,4 @@ Axive Free is free software under the [GNU General Public License v3.0](LICENSE)
 
 It carries independent programs under their own licences: [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense), [FFmpeg](https://ffmpeg.org) (GPL v3), [aria2](https://aria2.github.io) (GPL v2 or later), [Node.js](https://nodejs.org) (MIT), [Ink](https://github.com/vadimdemedes/ink), React and React DOM (MIT), Microsoft Edge WebView2 SDK (BSD-style), and the Cormorant and Source Serif 4 fonts (SIL Open Font License). See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), or run `Axive-Free.exe --notices`.
 
-This repository is published as is: it does not take issues or pull requests. Axive and its support live at [axive.xyz](https://axive.xyz/?ref=github).
+Found a bug? [Report it here](https://github.com/AxiveCuisine/axive-free/issues/new/choose) with the form. Every report is read, but there is no promise of a reply or of a date for a fix. Pull requests are not merged. Questions about buying Axive belong on [axive.xyz](https://axive.xyz/?ref=github).

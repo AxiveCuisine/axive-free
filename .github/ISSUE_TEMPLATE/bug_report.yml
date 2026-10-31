@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Axive Free does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for writing it down. Axive Free is a small project: every report is read, but there is no promise of a reply or of a date for a fix.
+
+        Before you send it, take out anything private: links to private or members-only videos, your user name, folder names. Axive Free's own logs and reports already leave out your user name and home folder.
+  - type: input
+    id: version
+    attributes:
+      label: Axive Free version
+      description: "`Axive-Free.exe --version` in a terminal, or the version on the release you downloaded."
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it happens
+      options:
+        - In the window
+        - In the terminal
+        - In both
+        - Before it opens (first launch, setting up its tools)
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      description: "Windows 10 or 11, and its version if you know it (Settings › System › About)."
+      placeholder: "Windows 11 23H2"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: again
+    attributes:
+      label: How to make it happen again
+      description: The steps. If a public link shows the problem, add it.
+  - type: textarea
+    id: report
+    attributes:
+      label: Report
+      description: "When a download fails, Axive Free writes a report to `%LOCALAPPDATA%\\Axive Free\\logs\\reports` (in the terminal, the error says where it rests). Paste the newest one here, after reading it for anything private."
+      render: text
