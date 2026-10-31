@@ -1,6 +1,6 @@
 # GitHub metadata for AxiveCuisine/axive-free (for the owner to apply)
 
-Nothing here has been applied. Set these on the repository page (the gear beside "About") or with `gh repo edit`.
+Applied on 1 November 2026 (description, website, topics, Issues on, release v1.1.0 published). GitHub kept 17 topics. Kept here to reapply or adjust: the repository page (the gear beside "About") or `gh repo edit`.
 
 ## Description (about 150 characters)
 
