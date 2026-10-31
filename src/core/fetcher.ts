@@ -1139,6 +1139,24 @@ export function relinkTarget(text: string): string {
   return url.href
 }
 
+// what proves who the user is to a server, and so must never follow a file to another one
+const CREDENTIALS = ['header', 'referer', 'http-user', 'http-passwd', 'ftp-user', 'ftp-passwd']
+
+const originOf = (uri: string | undefined): string | undefined => {
+  try {
+    return uri ? new URL(uri).origin : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The options a relinked file keeps: its credentials only while the origin stays the same (an unknown old one counts as different). */
+export function carriedForRelink(old: Record<string, string | string[]>, oldUri: string | undefined, newUri: string): Record<string, string | string[]> {
+  const before = originOf(oldUri)
+  if (before && before !== 'null' && before === originOf(newUri)) return {...old}
+  return Object.fromEntries(Object.entries(old).filter(([k]) => !CREDENTIALS.includes(k)))
+}
+
 /**
  * Give a paused or failed file a new address and carry on from what it has:
  * the partial file and its .aria2 control file stay where they are. Its
@@ -1156,7 +1174,7 @@ export async function relinkFetch(gid: string, text: string, opts: Pick<AddOptio
   // address under the same name resumes from that control file, reliably.
   const status = await rpc<Aria2Status>('tellStatus', gid, ['files', 'dir']).catch(() => undefined)
   const file = status?.files[0]?.path
-  const old = await optionsFor(gid)
+  const old = carriedForRelink(await optionsFor(gid), item.uri ?? status?.files[0]?.uris?.[0]?.uri, uri)
   const fresh = opts.headers || opts.cookie || opts.referer || opts.userAgent ? addOptionsFor(uri, opts) : {}
   handled.add(gid)
   if (item.state !== 'failed') {

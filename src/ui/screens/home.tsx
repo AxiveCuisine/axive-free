@@ -210,7 +210,7 @@ export function HomeScreen({link, animated}: {link?: string; animated: boolean})
         </Box>
       ) : (
         <Box flexDirection="column" alignItems="center">
-          <Faint>video · music · any file · 1,800+ sites · up to 1080p</Faint>
+          <Faint>video · music · any file · 1,800+ sites · up to 8K</Faint>
         </Box>
       )}
     </Box>

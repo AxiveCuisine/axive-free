@@ -2,7 +2,7 @@
 # Builds release\Axive.exe — one self-contained file. Inside it (Node SEA assets):
 # yt-dlp (folder build, checked against the SHA2-256SUMS published with the
 # release), ffmpeg + ffprobe, a node runtime for yt-dlp's YouTube solver, aria2,
-# the native host and the icon. On first launch Axive Free unpacks them into its data
+# the native host, the window (WebView2) and the icon. On first launch Axive Free unpacks them into its data
 # folder and verifies them by hash on every launch after.
 #
 #   npm run build ; pwsh -NoProfile -File scripts\package.ps1 [-FfmpegDir <folder with ffmpeg.exe + dlls>]
@@ -23,6 +23,17 @@ $bundle = Join-Path $root 'dist\axive.cjs'
 if (-not (Test-Path $bundle)) { throw 'dist\axive.cjs is missing - run npm run build first' }
 $version = (Get-Content -Raw (Join-Path $root 'package.json') | ConvertFrom-Json).version
 function Sha([string]$f) { (Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant() }
+# every file a zip unpacks to, by its path in bin: the app hashes all of them, not only the exe,
+# so a swapped dll, ffprobe or a file under yt-dlp's _internal is caught too
+function ZipFiles([string]$zip, [string]$dest) {
+  $dir = Join-Path $build "files-probe"; Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue; New-Item -ItemType Directory $dir | Out-Null
+  & $tar -xf $zip -C $dir
+  if ($LASTEXITCODE -ne 0) { throw "tar could not read $zip" }
+  $map = [ordered]@{}
+  Get-ChildItem $dir -Recurse -File | Sort-Object FullName | ForEach-Object { $map["$dest/" + $_.FullName.Substring($dir.Length + 1).Replace('\', '/')] = Sha $_.FullName }
+  Remove-Item -Recurse -Force $dir
+  $map
+}
 
 # 1. yt-dlp: the release zip, verified against its published checksums
 $base = 'https://github.com/yt-dlp/yt-dlp/releases'
@@ -87,12 +98,19 @@ Remove-Item -Recurse -Force $aria2Probe
 Copy-Item (Join-Path $build 'host\axive-host.exe') (Join-Path $pay 'axive-host.exe')
 Copy-Item (Join-Path $build 'axive.ico') (Join-Path $pay 'axive.ico')
 $hostSha = Sha (Join-Path $pay 'axive-host.exe')
+# 4b. the window (the graphical interface, shared with Axive): axive-window.exe and the WebView2 SDK, built beside the host
+$winDir = Join-Path $build 'window'
+$winZip = Join-Path $pay 'window.zip'
+& $tar -a -cf $winZip -C $winDir axive-window.exe Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll WebView2-LICENSE.txt
+if ($LASTEXITCODE -ne 0) { throw 'tar (window) failed' }
+$winSha = Sha (Join-Path $winDir 'axive-window.exe')
 $items = @(
-  @{name='yt-dlp'; asset='yt-dlp.zip'; kind='zip'; dest='yt-dlp'; check=$ytCheck; sha256=$ytSha; size=(Get-Item $ytZip).Length},
-  @{name='ffmpeg'; asset='ffmpeg.zip'; kind='zip'; dest='ffmpeg'; check='ffmpeg/ffmpeg.exe'; sha256=$ffSha; size=(Get-Item $ffZip).Length},
-  @{name='node'; asset='node.zip'; kind='zip'; dest='node'; check='node/node.exe'; sha256=$nodeSha; size=(Get-Item $nodeZip).Length},
-  @{name='aria2'; asset='aria2.zip'; kind='zip'; dest='aria2'; check='aria2/aria2c.exe'; sha256=$aria2Sha; size=(Get-Item $aria2Zip).Length},
-  @{name='host'; asset='axive-host.exe'; kind='raw'; dest='host/axive-host.exe'; check='host/axive-host.exe'; sha256=$hostSha; size=(Get-Item (Join-Path $pay 'axive-host.exe')).Length}
+  @{name='yt-dlp'; asset='yt-dlp.zip'; kind='zip'; dest='yt-dlp'; check=$ytCheck; sha256=$ytSha; size=(Get-Item $ytZip).Length; files=(ZipFiles $ytZip 'yt-dlp')},
+  @{name='ffmpeg'; asset='ffmpeg.zip'; kind='zip'; dest='ffmpeg'; check='ffmpeg/ffmpeg.exe'; sha256=$ffSha; size=(Get-Item $ffZip).Length; files=(ZipFiles $ffZip 'ffmpeg')},
+  @{name='node'; asset='node.zip'; kind='zip'; dest='node'; check='node/node.exe'; sha256=$nodeSha; size=(Get-Item $nodeZip).Length; files=(ZipFiles $nodeZip 'node')},
+  @{name='aria2'; asset='aria2.zip'; kind='zip'; dest='aria2'; check='aria2/aria2c.exe'; sha256=$aria2Sha; size=(Get-Item $aria2Zip).Length; files=(ZipFiles $aria2Zip 'aria2')},
+  @{name='host'; asset='axive-host.exe'; kind='raw'; dest='host/axive-host.exe'; check='host/axive-host.exe'; sha256=$hostSha; size=(Get-Item (Join-Path $pay 'axive-host.exe')).Length; files=[ordered]@{'host/axive-host.exe'=$hostSha}},
+  @{name='window'; asset='window.zip'; kind='zip'; dest='window'; check='window/axive-window.exe'; sha256=$winSha; size=(Get-Item $winZip).Length; files=(ZipFiles $winZip 'window')}
 )
 $payloadJson = Join-Path $pay 'payload.json'
 [IO.File]::WriteAllText($payloadJson, (@{version="$version+$YtdlpVersion"; items=$items} | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
@@ -100,7 +118,7 @@ $payloadJson = Join-Path $pay 'payload.json'
 # 5. the single executable: blob (from a neutral folder, so no user path is recorded), icon, inject
 $neutral = Join-Path $env:PUBLIC 'axive-free-sea'; Remove-Item -Recurse -Force $neutral -ErrorAction SilentlyContinue; New-Item -ItemType Directory $neutral | Out-Null
 Copy-Item $bundle (Join-Path $neutral 'axive.cjs')
-$seaFiles = @('payload.json','yt-dlp.zip','ffmpeg.zip','node.zip','aria2.zip','axive-host.exe','axive.ico')
+$seaFiles = @('payload.json','yt-dlp.zip','ffmpeg.zip','node.zip','aria2.zip','axive-host.exe','window.zip','axive.ico')
 $assets = @{}; foreach ($f in $seaFiles) { Copy-Item (Join-Path $pay $f) $neutral; $assets[$f] = Join-Path $neutral $f }
 $cfg = Join-Path $neutral 'sea-config.json'
 [IO.File]::WriteAllText($cfg, (@{main=(Join-Path $neutral 'axive.cjs'); output=(Join-Path $neutral 'axive.blob'); disableExperimentalSEAWarning=$true; useCodeCache=$false; assets=$assets} | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))

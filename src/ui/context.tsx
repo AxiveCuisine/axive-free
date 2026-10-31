@@ -89,7 +89,7 @@ export function openUrl(url: string): void {
   if (!/^https:\/\//.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url)) return
   try {
     const child = IS_WIN
-      ? spawn(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'explorer.exe'), [url], {detached: true, stdio: 'ignore'})
+      ? spawn(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url], {detached: true, stdio: 'ignore'})
       : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], {detached: true, stdio: 'ignore'})
     child.on('error', () => {})
     child.unref()

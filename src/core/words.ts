@@ -78,7 +78,6 @@ const EXACT: Record<string, string> = {
   'new here? press ? for every key and every door': 'new here? press ? to see everything Axive Free can do',
 
   // -- the shell
-  'draw ≤1080p': 'download (up to 1080p)',
   'look at it first: pick the vessel': 'see the formats first',
   'this key no longer opens Axive. offer it again, or another': 'this licence key no longer works. enter it again, or another one',
   'reading spotify…': 'reading the Spotify link…',
@@ -181,7 +180,6 @@ const EXACT: Record<string, string> = {
   'the deep returned nothing for that': 'no results for that',
   'click to choose a vessel': 'click to pick a format',
   'space to check': 'space to select',
-  'each ≤ 1080p mp4; asks where once': 'each as mp4 up to 1080p; asks where to save once',
   'results come from YouTube; click one to choose its vessel, check several to draw them all.': 'results come from YouTube. click one to pick its format, or select several to download them all.',
 
   // -- errors before a draw, the remote, recipes, mirrors, setup
@@ -659,6 +657,9 @@ const EVERYDAY: Book = {exact: new Map(Object.entries(EXACT)), patterns: PATTERN
 export type Language = 'en'
 let on = false
 const cache = new Map<string, string>()
+
+/** Free speaks English only; the window (shared with Axive) asks anyway */
+export function setLanguage(_language: string): void {}
 
 /** Switch Simple Language on or off for every later plain() call. */
 export function setPlainWords(value: boolean): void {

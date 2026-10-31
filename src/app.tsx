@@ -17,7 +17,7 @@ import {offeredStore} from './core/instance.js'
 import {detectPlatform, isProbablyUrl} from './core/platforms.js'
 import {useStore} from './core/store.js'
 import {taskbarProgress, type TermInfo} from './core/terminal.js'
-import {tools} from './core/tools.js'
+import {tools, whenToolsReady} from './core/tools.js'
 import {checkForUpdates} from './core/update.js'
 import {capChoice, probe, ToolError} from './core/ytdlp.js'
 import {Boot} from './ui/components/boot.js'
@@ -121,6 +121,7 @@ function Main({term, initialUrl, setupNeeded, restored, copy}: AppProps & {copy:
     setStack(st => [...st.filter(s => s.name !== 'probing'), {name: 'probing', url, status: 'reading…'}])
     void (async () => {
       try {
+        await whenToolsReady()
         const result = await probe(tools(), url, controller.signal)
         if (controller.signal.aborted) return
         setStack(st => [...st.filter(s => s.name !== 'probing'), result.kind === 'video' ? {name: 'picking', probe: {url, info: result.info, infoJsonPath: result.infoJsonPath}} : {name: 'axive', why: ONLY_IN_AXIVE.playlist}])

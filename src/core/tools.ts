@@ -25,8 +25,10 @@ export type Tools = {
   /** a real node for yt-dlp's JavaScript challenge solver */
   node?: string
   host?: string
-  /** aria2c: the download manager's engine */
+  /** aria2c: the download manager's engine (files, torrents, magnets) */
   aria2?: string
+  /** axive-window.exe: the graphical interface's window (WebView2) */
+  window?: string
 }
 
 export type PayloadItem = {
@@ -39,11 +41,13 @@ export type PayloadItem = {
   check: string
   sha256: string
   size: number
+  /** every file the item unpacks to (path in bin → SHA-256): all are hashed, not only the check file */
+  files?: Record<string, string>
 }
 
 export type Payload = {version: string; items: PayloadItem[]}
 
-type InstalledState = {payload?: string; ytdlp?: {version: string; sha256: string}}
+type InstalledState = {payload?: string; ytdlp?: {version: string; sha256: string; files?: Record<string, string>}}
 
 const stateFile = () => path.join(paths.bin, 'installed.json')
 
@@ -61,7 +65,7 @@ export function payload(): Payload | undefined {
     const raw = seaModule()?.getRawAsset('payload.json')
     const pack = raw ? (JSON.parse(Buffer.from(raw).toString('utf8')) as Payload) : undefined
     // every path in the manifest must stay inside bin: a relative name, no way up
-    if (pack && !pack.items.every(item => [item.asset, item.dest, item.check].every(insideBin))) return undefined
+    if (pack && !pack.items.every(item => [item.asset, item.dest, item.check, ...Object.keys(item.files ?? {})].every(insideBin))) return undefined
     return pack
   } catch {
     return undefined
@@ -93,9 +97,20 @@ export function resolveTools(): Tools {
     node: first(`node/node${EXE}`, `node${EXE}`) ?? (isSea() ? undefined : process.execPath),
     host: first(`host/axive-host${EXE}`, `axive-host${EXE}`),
     aria2: first(`aria2/aria2c${EXE}`, `aria2c${EXE}`),
+    window: first(`window/axive-window${EXE}`),
   }
 }
 
+/** axive-window.exe alone, before yt-dlp and the rest are unpacked: the window opens first. */
+export function windowExe(): string | undefined {
+  const exe = path.join(binDir(), 'window', `axive-window${EXE}`)
+  return fs.existsSync(exe) ? exe : undefined
+}
+
+/** Names of every payload item but the given ones (the rest of a split install). */
+export function payloadNamesExcept(...skip: string[]): string[] {
+  return (payload()?.items ?? []).map(item => item.name).filter(name => !skip.includes(name))
+}
 
 export class ToolsMissingError extends Error {
   readonly missing = true
@@ -139,11 +154,11 @@ let readyWaiters: (() => void)[] = []
 
 /** Resolves once every carried tool is unpacked (at once when they are, or in a dev checkout). */
 export function whenToolsReady(): Promise<void> {
-  if (!needsSetup()) return Promise.resolve()
-  return new Promise(resolve => readyWaiters.push(resolve))
+  const unpacked = needsSetup() ? new Promise<void>(resolve => readyWaiters.push(resolve)) : Promise.resolve()
+  return unpacked.then(checkTools)
 }
 
-/** Full: hash every check file against the build-time record (or the renewed yt-dlp's own). */
+/** Full: hash every file of every item against the build-time record (or the renewed yt-dlp's own). */
 export async function verifyTools(): Promise<ToolHealth[]> {
   const pack = payload()
   if (!pack) {
@@ -156,17 +171,95 @@ export async function verifyTools(): Promise<ToolHealth[]> {
   }
   const state = readJson<InstalledState>(stateFile(), {})
   const out: ToolHealth[] = []
-  for (const item of pack.items) {
-    const file = path.join(paths.bin, item.check)
+  for (const item of pack.items) out.push({name: item.name, ...(await judgeItem(item, state))})
+  return out
+}
+
+/** One item against its record: every file hashed, and (for a folder) nothing added beside them. */
+export async function judgeItem(item: PayloadItem, state: InstalledState): Promise<{ok: boolean; reason?: string}> {
+  const renewed = item.name === 'yt-dlp' ? state.ytdlp : undefined
+  const expected = renewed ? (renewed.files ?? {[item.check]: renewed.sha256}) : (item.files ?? {[item.check]: item.sha256})
+  // the renewed record lives in a file beside the tools: a path in it that leaves its folder is itself tampering
+  if (!Object.keys(expected).every(rel => insideBin(rel) && rel.startsWith(`${item.dest.split('/')[0]}/`))) return {ok: false, reason: 'altered'}
+  let reason: string | undefined
+  for (const [rel, sha] of Object.entries(expected)) {
+    const file = path.join(paths.bin, rel)
     if (!fs.existsSync(file)) {
-      out.push({name: item.name, ok: false, reason: 'missing'})
+      reason ??= 'missing'
       continue
     }
-    const expected = item.name === 'yt-dlp' && state.ytdlp ? state.ytdlp.sha256 : item.sha256
-    const actual = await sha256File(file).catch(() => '')
-    out.push(actual === expected ? {name: item.name, ok: true} : {name: item.name, ok: false, reason: 'altered'})
+    if ((await sha256File(file).catch(() => '')) !== sha) return {ok: false, reason: 'altered'}
   }
+  if (reason) return {ok: false, reason}
+  // a whole-folder record also refuses what was added beside it: a planted dll loads as surely as a swapped one
+  const whole = renewed ? renewed.files : item.files
+  // (not the browser extensions: a browser may keep its own notes in a folder it loaded)
+  if (whole && item.kind === 'zip' && !item.name.startsWith('extension')) {
+    const known = new Set(Object.keys(whole).map(rel => path.join(paths.bin, rel).toLowerCase()))
+    if (filesUnder(path.join(paths.bin, item.dest)).some(file => !known.has(file.toLowerCase()))) return {ok: false, reason: 'altered'}
+  }
+  return {ok: true}
+}
+
+function filesUnder(dir: string): string[] {
+  const out: string[] = []
+  const walk = (at: string) => {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(at, {withFileTypes: true})
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(at, entry.name)
+      // a link or junction is never part of a payload: count it as a stray, never follow it
+      if (entry.isDirectory()) walk(full)
+      else out.push(full)
+    }
+  }
+  walk(dir)
   return out
+}
+
+// the launch check: every tool hashed once per start, before anything runs one; what is altered or
+// missing is restored from the exe itself, and what cannot be restored is refused, never run
+let checking: Promise<void> | undefined
+/** true once this start's check passed: the synchronous version probes run nothing before it */
+let proven = false
+
+/** Resolves once this start's tools are proven intact (restoring them if needed); rejects if they cannot be. */
+export function checkTools(): Promise<void> {
+  checking ??= (async () => {
+    if (!payload()) return void (proven = true)
+    const broken = (await verifyTools()).filter(h => !h.ok)
+    if (!broken.length) return
+    logEvent('warn', `tools failed their check: ${broken.map(h => `${h.name} (${h.reason})`).join(', ')}; restoring from the exe`)
+    await unpackTools(broken.map(h => h.name), undefined, {})
+    const still = (await verifyTools()).filter(h => !h.ok)
+    if (still.length) throw new ToolsAlteredError(`${still.map(h => h.name).join(', ')} failed the integrity check and could not be restored: run Repair in settings`)
+    logEvent('info', 'tools restored and verified')
+  })().then(() => void (proven = true))
+  // a failed check is asked again next time (after a Repair, say), not remembered as failed
+  checking.catch(() => (checking = undefined))
+  return checking
+}
+
+export class ToolsAlteredError extends Error {}
+
+/** The native host alone, synchronously: it starts before the first frame, ahead of the full check. */
+export const hostIntact = (file: string | undefined): boolean => itemIntact('host', file)
+
+/** One single-file item (the host, the window), synchronously, for what must start before the full check. */
+export function itemIntact(name: string, file: string | undefined): boolean {
+  const pack = payload()
+  if (!pack || !file) return Boolean(file)
+  const item = pack.items.find(i => i.name === name)
+  if (!item) return true
+  try {
+    return path.resolve(file) === path.resolve(paths.bin, item.check) && crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') === item.sha256
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -177,6 +270,9 @@ export async function verifyTools(): Promise<ToolHealth[]> {
 export async function installTools(only?: string[], onStep?: (label: string, done: number, total: number) => void, opts: {complete?: boolean} = {}): Promise<void> {
   try {
     await unpackTools(only, onStep, opts)
+    // a whole set fresh out of the exe is this start's proof; after a partial repair the next check looks afresh
+    if (!only) [checking, proven] = [Promise.resolve(), true]
+    else checking = undefined
   } finally {
     // the whole set has landed, or failed: whoever waited goes on and meets the result
     if (!only || opts.complete) for (const resolve of readyWaiters.splice(0)) resolve()
@@ -235,7 +331,7 @@ async function unpackTools(only: string[] | undefined, onStep: ((label: string, 
   onStep?.('done', items.length, items.length)
   fs.rmSync(staging, {recursive: true, force: true})
   const state = readJson<InstalledState>(stateFile(), {})
-  // a split install marks the payload whole once its last part lands
+  // a split install (the window first, then the rest) marks the payload whole once its last part lands
   if (!only || opts.complete) state.payload = pack.version
   writeFileAtomic(stateFile(), JSON.stringify(state))
   forgetTools()
@@ -264,7 +360,14 @@ export async function renameWhenFree(from: string, to: string, attempts = 40): P
 export async function recordRenewedYtdlp(version: string): Promise<void> {
   const file = tools().ytdlp
   const state = readJson<InstalledState>(stateFile(), {})
-  state.ytdlp = {version, sha256: await sha256File(file)}
+  const home = path.dirname(file)
+  // the folder build is recorded whole, as the build records it, so the launch check covers _internal too
+  let files: Record<string, string> | undefined
+  if (path.basename(home) === 'yt-dlp' && path.dirname(home) === paths.bin) {
+    files = {}
+    for (const each of filesUnder(home)) files[path.relative(paths.bin, each).split(path.sep).join('/')] = await sha256File(each)
+  }
+  state.ytdlp = {version, sha256: await sha256File(file), ...(files ? {files} : {})}
   writeFileAtomic(stateFile(), JSON.stringify(state))
 }
 
@@ -280,7 +383,12 @@ export function unzip(archive: string, dest: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // versions
 
+// a renewal tries the new yt-dlp from its staging folder before swapping it in: that one is outside the check
+const isTrial = (t: Tools): boolean => !path.resolve(t.ytdlp).toLowerCase().startsWith(path.resolve(paths.bin).toLowerCase() + path.sep) || /\.new[\\/]/i.test(t.ytdlp)
+
+
 export function ytdlpVersion(t: Tools = tools()): string {
+  if (!proven && !isTrial(t)) return ''
   try {
     const out = spawnSync(t.ytdlp, ['--version'], {encoding: 'utf8', windowsHide: true, timeout: 15_000})
     const version = out.stdout.trim().split(/\s+/)[0] ?? ''
@@ -292,7 +400,7 @@ export function ytdlpVersion(t: Tools = tools()): string {
 }
 
 export function ffmpegVersion(t: Tools = tools()): string {
-  if (!t.ffmpegDir) return ''
+  if (!t.ffmpegDir || !proven) return ''
   try {
     const out = spawnSync(path.join(t.ffmpegDir, `ffmpeg${EXE}`), ['-hide_banner', '-version'], {encoding: 'utf8', windowsHide: true, timeout: 10_000})
     const version = /ffmpeg version (\S+)/.exec(out.stdout)?.[1] ?? ''

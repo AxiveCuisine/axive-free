@@ -29,7 +29,8 @@ test('the speed limit and tunnels change through updateConfig', () => {
 
 test('config set parses each kind, and no label carries an em dash', () => {
   assert.deepEqual(parseConfigValue('animations', 'off'), {ok: true, key: 'animations', value: false})
-  assert.equal(parseConfigValue('tunnels', '3').ok, false)
+  assert.equal(parseConfigValue('tunnels', '3').ok, true)
+  assert.equal(parseConfigValue('tunnels', '4').ok, false)
   assert.equal(parseConfigValue('nothing', '1').ok, false)
   const parsed = parseConfigValue('categories', '[{"id":"isos","name":"ISOs","exts":["iso"]}]')
   assert.ok(parsed.ok)

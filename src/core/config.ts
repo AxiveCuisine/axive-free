@@ -5,10 +5,8 @@ import {setPlainWords} from './words.js'
 export const THEME_MODES = ['abyss', 'ash', 'auto'] as const
 export type ThemeMode = (typeof THEME_MODES)[number]
 
-/** the highest a video comes in Axive Free; 1440p, 4K and 8K are Axive's */
-export const FREE_MAX_HEIGHT = 1080
 /** draws and fetches side by side in Axive Free */
-export const FREE_MAX_TUNNELS = 2
+export const FREE_MAX_TUNNELS = 3
 
 // ---------------------------------------------------------------------------
 // the shape kept inside the settings file for file categories. Defined here

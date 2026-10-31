@@ -36,3 +36,21 @@ Node.js · https://nodejs.org
 
 Ink, React, string-width, slice-ansi
   MIT licence. Copyright their respective authors.
+
+Microsoft WebView2 SDK · https://aka.ms/webview2
+  The window of Axive Free shows its interface through WebView2 (the Edge
+  engine that ships with Windows). The SDK files beside axive-window.exe
+  (Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll,
+  WebView2Loader.dll) are Copyright (C) Microsoft Corporation, redistributed
+  under its BSD-style licence, which travels with them as WebView2-LICENSE.txt
+  in %LOCALAPPDATA%\Axive Free\bin\window. The WebView2 runtime itself is part
+  of Windows and is not bundled.
+
+Cormorant, Cormorant SC · https://github.com/CatharsisFonts/Cormorant
+  Copyright Christian Thalmann. SIL Open Font License 1.1 (gui/fonts/Cormorant-OFL.txt).
+
+Source Serif 4 · https://github.com/adobe-fonts/source-serif
+  Copyright Adobe. SIL Open Font License 1.1 (gui/fonts/SourceSerif-LICENSE.md).
+
+React DOM
+  MIT licence. Copyright Meta Platforms, Inc. and affiliates.

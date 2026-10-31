@@ -1,8 +1,10 @@
+import {spawn} from 'node:child_process'
 import React from 'react'
 import {Box} from 'ink'
 import {updateConfig, useConfig} from '../../core/config.js'
-import {paths, readJson, writeFileAtomic} from '../../core/paths.js'
+import {isSea, paths, readJson, writeFileAtomic} from '../../core/paths.js'
 import {useSize} from '../components/fullscreen.js'
+import {say} from '../components/notice.js'
 import {useApp, type Screen} from '../context.js'
 import {Button, Faint, Gap, Quiet, Rule, Title, Toggle} from '../kit.js'
 import {Text} from '../text.js'
@@ -61,14 +63,28 @@ const EVERYWHERE: Key[] = [
   ['drag across text', 'copy it'],
 ]
 
-type Door = {label: string; does: string; to: Screen}
+type Door = {label: string; does: string; to?: Screen; window?: boolean}
 const DOORS: Door[] = [
-  {label: 'draw', does: 'draw a link: video or music from 1,800+ sites, up to 1080p', to: {name: 'home'}},
+  {label: 'draw', does: 'draw a link: video or music from 1,800+ sites, up to 8K', to: {name: 'home'}},
   {label: 'download manager', does: 'any file over up to 16 connections, pause and resume', to: {name: 'fetch'}},
   {label: 'tunnels', does: 'every draw in flight: pause, reorder, retry', to: {name: 'tunnels'}},
   {label: 'settings', does: 'folders, naming, speed limit, tunnels, looks', to: {name: 'settings'}},
-  {label: 'Axive', does: 'the full table: 8K, playlists, Spotify, torrents, the window', to: {name: 'axive'}},
+  {label: 'the window', does: 'the same Axive Free in a window; this terminal hands over and closes', window: true},
+  {label: 'Axive', does: 'the full table: playlists, Spotify, torrents, the browser, your phone', to: {name: 'axive'}},
 ]
+
+/** Hand over to the window: it opens, asks this terminal to move, and every draw carries on there. */
+function openWindow(): void {
+  try {
+    const args = isSea() ? ['--gui'] : [process.argv[1]!, '--gui']
+    const child = spawn(process.execPath, args, {detached: true, stdio: 'ignore', windowsHide: true})
+    child.on('error', () => say('the window would not open', 'error'))
+    child.unref()
+    say('opening the window: Axive Free moves there, draws and all', 'ok', 8000)
+  } catch {
+    say('the window would not open', 'error')
+  }
+}
 const ALSO = ['also from PowerShell: axive-free --help']
 
 /** Whether the ? sheet has ever been opened (the first-run nudge on home goes quiet after). */
@@ -145,7 +161,7 @@ export function GuideScreen({about}: {about: string}) {
         {DOORS.map(door => (
           <Box key={door.label}>
             <Box width={22} flexShrink={0}>
-              <Button compact label={door.label} onPress={() => (door.to.name === 'home' ? app.nav.home() : app.nav.replace(door.to))} />
+              <Button compact label={door.label} onPress={() => (door.window ? openWindow() : door.to && (door.to.name === 'home' ? app.nav.home() : app.nav.replace(door.to)))} />
             </Box>
             {roomy || width >= 80 ? (
               <Text color={theme.gray} wrap="truncate-end">

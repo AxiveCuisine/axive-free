@@ -17,12 +17,12 @@ import {useTheme} from '../theme.js'
 
 type Course = [what: string, free: string, axive: string]
 const COURSES: Course[] = [
-  ['quality', 'up to 1080p', '1440p, 4K and 8K'],
+  ['quality', 'up to 8K, audio tracks', 'the same, plus subtitles'],
   ['links', 'one at a time', 'playlists, channels, search, batch'],
   ['download manager', 'files, 16 connections', 'plus torrents and magnets'],
-  ['tunnels', '2 side by side', 'up to 4, named queues, schedules'],
+  ['tunnels', '3 side by side', 'up to 4, named queues, schedules'],
   ['Spotify', '·', 'tracks, albums, playlists as tagged mp3'],
-  ['the window', 'terminal only', 'a full window beside the terminal'],
+  ['the window', 'window and terminal', 'the same, with every door below'],
   ['browser', '·', 'an extension: one click on any page'],
   ['your phone', '·', 'send links from it, take files to it'],
   ['tools', '·', 'convert, trim, highlight reels, subtitles'],

@@ -8,7 +8,7 @@ const ownHome = !process.env.AXIVE_HOME
 process.env.AXIVE_HOME ??= path.join(os.tmpdir(), `axive-fetch-test-${process.pid}`)
 // the sandbox data folder goes with the run (storage is limited)
 test.after(() => ownHome && fs.rmSync(process.env.AXIVE_HOME!, {recursive: true, force: true}))
-const {engineArgs, enrich, etaFrom, fetchKind, friendlyError, isMagnet, itemFrom, looksLikeHtml, MASQUERADE_WARNING, masqueradeExt, nextConnections, relinkTarget, removeWhenFree, smoothSpeed} = await import('./fetcher.js')
+const {engineArgs, enrich, etaFrom, fetchKind, friendlyError, isMagnet, itemFrom, looksLikeHtml, MASQUERADE_WARNING, masqueradeExt, nextConnections, relinkTarget, carriedForRelink, removeWhenFree, smoothSpeed} = await import('./fetcher.js')
 
 test('a server that refuses parallel streams gets 4, then 2, then 1, then the failure is shown', () => {
   assert.equal(nextConnections('22', 0), 4)
@@ -233,4 +233,16 @@ test('a new link must be a web address', () => {
   assert.throws(() => relinkTarget('javascript:alert(1)'), /https/)
   assert.throws(() => relinkTarget('file:///C:/Windows/win.ini'), /https/)
   assert.throws(() => relinkTarget('not a link'), /full address/)
+})
+
+test('a new link on another origin leaves the old credentials behind', () => {
+  const old = {header: ['Authorization: Bearer DEMO', 'Cookie: sid=DEMO'], referer: 'https://a.example/page', 'http-user': 'me', 'http-passwd': 'pw', 'user-agent': 'UA', out: 'file.zip'}
+  const same = carriedForRelink(old, 'https://a.example/old.zip?sig=1', 'https://a.example/new.zip?sig=2')
+  assert.deepEqual(same, old)
+  for (const elsewhere of ['https://b.example/new.zip', 'http://a.example/new.zip', 'https://a.example:8443/new.zip']) {
+    const kept = carriedForRelink(old, 'https://a.example/old.zip', elsewhere)
+    assert.deepEqual(kept, {'user-agent': 'UA', out: 'file.zip'}, elsewhere)
+  }
+  // an old address nobody knows is treated as another origin
+  assert.deepEqual(carriedForRelink(old, undefined, 'https://a.example/new.zip'), {'user-agent': 'UA', out: 'file.zip'})
 })

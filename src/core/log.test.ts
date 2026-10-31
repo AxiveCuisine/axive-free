@@ -31,3 +31,28 @@ test('redact replaces telegram bot tokens', () => {
   assert.equal(out.includes(token), false)
   assert.ok(out.includes('<bot-token>'))
 })
+
+test('redact drops link fragments, which often hold tokens', () => {
+  const out = redact('back to https://example.com/cb#access_token=DEMO_SECRET&state=1')
+  assert.equal(out.includes('DEMO_SECRET'), false)
+  assert.ok(out.includes('https://example.com/cb#'))
+})
+
+test('redact hides credential headers however they are written', () => {
+  for (const text of [
+    'Authorization: Bearer DEMO_SECRET',
+    '--add-header "Authorization:Basic DEMO_SECRET"',
+    '{"authorization":"DEMO_SECRET"}',
+    '--header=Cookie: sid=DEMO_SECRET; theme=dark',
+    'Proxy-Authorization: Basic DEMO_SECRET',
+    'sent bearer DEMO_SECRET_TOKEN',
+    'body access_token=DEMO_SECRET&x=1',
+  ]) {
+    assert.equal(redact(text).includes('DEMO_SECRET'), false, text)
+  }
+})
+
+test('redact leaves ordinary words alone', () => {
+  assert.equal(redact('basic settings saved'), 'basic settings saved')
+  assert.equal(redact('using --cookies-from-browser chrome'), 'using --cookies-from-browser chrome')
+})

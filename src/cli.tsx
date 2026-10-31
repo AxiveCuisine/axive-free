@@ -1,3 +1,4 @@
+import {execFileSync, spawn} from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import React from 'react'
@@ -9,21 +10,25 @@ import {DEFAULTS, META, configStore, displayValue, getConfig, loadConfig, parseC
 import {NOTICES} from './core/notices.js'
 import {G, applySafeGlyphs} from './core/glyphs.js'
 import {InputRouter} from './core/input.js'
-import {claimWithControl, focusWindow, holder, offeredStore, offerTo} from './core/instance.js'
-import {restoreQueue} from './core/jobs.js'
+import {claimWithControl, focusWindow, offeredStore, offerTo, openHolder, release, takeOver} from './core/instance.js'
+import {carryOver, restoreQueue} from './core/jobs.js'
+import {stopEngineAndWait} from './core/fetcher.js'
+import {runGui} from './gui/main.js'
 import {loadLedger} from './core/ledger.js'
 import {logEvent, setVersion} from './core/log.js'
-import {ensureDir, isSea, paths} from './core/paths.js'
+import {IS_WIN, ensureDir, isSea, paths} from './core/paths.js'
 import {FOCUS_OFF, FOCUS_ON, MOUSE_OFF, MOUSE_ON, detectTerminal, installFragment, relaunchInTerminal, removeFragment, taskbarProgress, wtExe} from './core/terminal.js'
-import {installTools, needsSetup, payload, resolveTools, tools, verifyTools} from './core/tools.js'
+import {checkTools, hostIntact, installTools, needsSetup, payload, resolveTools, tools, verifyTools} from './core/tools.js'
 import {renewYtdlp} from './core/update.js'
 import {captureFrames} from './ui/frames.js'
 
 const HELP = `
-  axive free · the fastest free video and file downloader for Windows Terminal.
+  axive free · the fastest free video and file downloader for Windows, in a window or the terminal.
 
   Usage
-    axive-free                       open Axive Free (in its own Windows Terminal window)
+    axive-free                       open Axive Free in the terminal (a double-click opens the window)
+    axive-free --gui [link]          open Axive Free in its window
+    axive-free --tui                 open Axive Free in the terminal, also from Explorer
     axive-free <link>                straight to the vessels for that link
     axive-free --renew               renew yt-dlp, then exit
     axive-free --repair              check every tool and restore what is damaged
@@ -41,7 +46,7 @@ const HELP = `
     --notices       the licences of the programs Axive Free carries
     -h, --help      show this help
 
-  Up to 8K, playlists, Spotify, torrents, the window and more: ${UPGRADE_URL}
+  Playlists, Spotify, torrents, a browser extension, your phone and more: ${UPGRADE_URL}
 `
 
 type Args = {
@@ -52,6 +57,8 @@ type Args = {
   inTerminal: boolean
   renew: boolean
   repair: boolean
+  gui: boolean
+  tui: boolean
   theme?: string
   url?: string
   command?: string[]
@@ -59,7 +66,7 @@ type Args = {
 }
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = {help: false, version: false, here: false, inTerminal: false, renew: false, repair: false}
+  const args: Args = {help: false, version: false, here: false, inTerminal: false, renew: false, repair: false, gui: false, tui: false}
   const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -88,6 +95,12 @@ export function parseArgs(argv: string[]): Args {
       case '--repair':
         args.repair = true
         break
+      case '--gui':
+        args.gui = true
+        break
+      case '--tui':
+        args.tui = true
+        break
       case '--theme': {
         const v = inline ?? argv[++i]
         if (v === undefined || v.startsWith('--')) args.error = '--theme needs a value'
@@ -100,7 +113,8 @@ export function parseArgs(argv: string[]): Args {
     }
     if (args.error) break
   }
-  if (positional[0] === 'config' || positional[0] === 'terminal') args.command = positional
+  if (args.gui && args.tui) args.error = 'choose --gui or --tui, not both'
+  else if (positional[0] === 'config' || positional[0] === 'terminal') args.command = positional
   else if (positional.length > 1) args.error = 'expected a single link'
   else if (positional[0]) args.url = positional[0]
   return args
@@ -158,6 +172,7 @@ async function ensureTools(): Promise<void> {
     out('preparing the tools Axive Free carries…')
     await installTools()
   }
+  await checkTools()
   resolveTools()
 }
 
@@ -185,6 +200,31 @@ async function runRepair(): Promise<number> {
   await installTools(broken)
   out(`${G.therefore} repaired. tools live in ${paths.bin}`)
   return 0
+}
+
+/** A double-click in Explorer: the window, not a console. */
+function startedByExplorer(): boolean {
+  if (!IS_WIN || !isSea()) return false
+  try {
+    const out = execFileSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tasklist.exe'), ['/fi', `pid eq ${process.ppid}`, '/fo', 'csv', '/nh'], {encoding: 'utf8', windowsHide: true, timeout: 3000})
+    return /^"explorer\.exe"/i.test(out.trim())
+  } catch {
+    return false
+  }
+}
+
+/** The window was asked for from a console of its own (a double-click): start again without one and let this one go. */
+function detachFromConsole(): boolean {
+  if (!IS_WIN || !isSea() || !process.stdout.isTTY) return false
+  if (process.env.AXIVE_GUI_NO_WINDOW === '1' || process.env.AXIVE_DETACHED === '1') return false
+  try {
+    const child = spawn(process.execPath, process.argv.slice(2), {detached: true, windowsHide: true, stdio: 'ignore', env: {...process.env, AXIVE_DETACHED: '1'}})
+    child.on('error', () => {})
+    child.unref()
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** The icon beside the data, for the Terminal profile. */
@@ -259,6 +299,11 @@ async function main(): Promise<void> {
   loadLedger()
   if (args.renew) process.exit(await runRenew())
   if (args.repair) process.exit(await runRepair())
+  // the window: no terminal needed. A plain double-click on Axive-Free.exe in Explorer opens it too
+  if (args.gui || (!args.tui && process.argv.length <= 2 && startedByExplorer())) {
+    if (detachFromConsole()) process.exit(0)
+    process.exit(await runGui(args.url))
+  }
 
   const isTTY = Boolean(process.stdout.isTTY && process.stdin.isTTY)
   if (!isTTY) {
@@ -276,25 +321,48 @@ async function main(): Promise<void> {
   if (term.kind === 'wt') installFragment()
   if (!term.rich) applySafeGlyphs()
 
-  // one Axive Free per data folder: two would resume the same downloads into the same files
-  const held = holder()
-  if (held) {
+  // one Axive Free per data folder: two would resume the same downloads into the same files.
+  // The window open: Axive Free moves here, draws and all. Another terminal open: that one comes forward.
+  const held = await openHolder()
+  const pause = () => new Promise(resolve => setTimeout(resolve, 2500))
+  if (held?.kind === 'gui') {
+    process.stdout.write('\n  Axive Free is open in its window: moving it here…\n')
+    if (!(await takeOver(held, 'tui'))) {
+      const focused = await focusWindow(held)
+      console.log(focused ? '  Axive Free is open in its window and could not move: it has come to the front.' : '  Axive Free is already open in another window. Use that one, or close it first.')
+      await pause()
+      process.exit(0)
+    }
+  } else if (held) {
     if (args.url) await offerTo(held, args.url)
     const focused = await focusWindow(held)
     console.log(focused ? '  Axive Free is already open in another window: it has come to the front.' : '  Axive Free is already open in another window. Use that one, or close it first.')
-    await new Promise(resolve => setTimeout(resolve, 2500))
+    await pause()
     process.exit(0)
   }
   await claimWithControl('tui', {
     focus: () => void bridge.window('focus').catch(() => {}),
     offer: url => offeredStore.set(url),
+    // the window opened: save what moves, let go, close (it carries on there)
+    async handover() {
+      carryOver()
+      await stopEngineAndWait().catch(() => {})
+      release()
+      leave()
+      process.exit(0)
+    },
   })
 
   const setupNeeded = needsSetup()
   if (!setupNeeded) {
     try {
       resolveTools()
-      bridge.start(tools().host)
+      // every tool is hashed in the background from here; nothing runs one until it passes
+      const checked = checkTools()
+      checked.catch(error => logEvent('error', (error as Error).message))
+      // the host starts at once when its own hash is right, else once the check has restored it
+      if (hostIntact(tools().host)) bridge.start(tools().host)
+      else void checked.then(() => bridge.start(tools().host), () => undefined)
     } catch {
       // no tools at all (a dev checkout without build/bin): the setup screen explains
     }

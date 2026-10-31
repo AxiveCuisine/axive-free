@@ -5,7 +5,7 @@ import {RELEASES as FREE_RELEASES} from './brand.js'
 import {getConfig} from './config.js'
 import {logEvent} from './log.js'
 import {IS_WIN, ensureDir, paths, readJson, writeFileAtomic} from './paths.js'
-import {forgetTools, recordRenewedYtdlp, renameWhenFree, tools, unzip, ytdlpVersion} from './tools.js'
+import {forgetTools, recordRenewedYtdlp, renameWhenFree, tools, unzip, whenToolsReady, ytdlpVersion} from './tools.js'
 import {collect} from './ytdlp.js'
 
 /**
@@ -68,6 +68,7 @@ export async function checkForUpdates(force = false): Promise<UpdateNews> {
       state.checkedAt = Date.now()
       writeFileAtomic(stateFile(), JSON.stringify(state))
     }
+    await whenToolsReady().catch(() => undefined)
     const current = ytdlpVersion()
     if (newer(state.ytdlpLatest, current)) news.ytdlp = {current, latest: state.ytdlpLatest!}
     if (newer(state.axiveLatest, __AXIVE_VERSION__)) news.axive = {current: __AXIVE_VERSION__, latest: state.axiveLatest!, url: state.axiveUrl, notes: state.axiveNotes}
@@ -88,6 +89,7 @@ async function fetchBuffer(url: string, signal?: AbortSignal): Promise<Buffer> {
  * but Windows' folder build, yt-dlp's own updater does the work.
  */
 export async function renewYtdlp(onStage?: (stage: string) => void, signal?: AbortSignal): Promise<string> {
+  await whenToolsReady()
   const t = tools()
   const before = ytdlpVersion(t)
   const folderBuild = IS_WIN && path.basename(path.dirname(t.ytdlp)) === 'yt-dlp' && fs.existsSync(path.join(path.dirname(t.ytdlp), '_internal'))

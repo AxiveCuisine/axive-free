@@ -3,7 +3,7 @@ import {rmSync} from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import {FREE_MAX_HEIGHT, getConfig, type Config} from './config.js'
+import {getConfig, type Config} from './config.js'
 import {clean, formatBytes} from './format.js'
 import {rawLine} from './log.js'
 import {SYSTEM32, ensureDir, paths} from './paths.js'
@@ -153,6 +153,12 @@ export type RawFormat = {
   tbr?: number
   filesize?: number
   filesize_approx?: number
+  /** the audio language ("en-US", "fr"), when the site says */
+  language?: string
+  /** 10 for the original audio on YouTube, lower for dubs */
+  language_preference?: number
+  /** "English (US) original (default), low" */
+  format_note?: string
 }
 
 export type PlaylistEntry = {id?: string; url: string; title: string; duration?: number; uploader?: string; ie_key?: string; view_count?: number}
@@ -261,6 +267,8 @@ export type DownloadChoice = {
   /** estimated bytes, when known */
   size?: number
   height?: number
+  /** the audio track chosen (an AudioTrack id), when the video had several */
+  audioTrack?: string
 }
 
 const MAX_VIDEO_CHOICES = 8
@@ -269,30 +277,145 @@ const MAX_VIDEO_CHOICES = 8
 // mp4 that plays everywhere, not AV1/Opus that many players still refuse
 const COMPATIBLE_SORT = ['-S', 'res,vcodec:h264,acodec:aac']
 
-// Free draws never above FREE_MAX_HEIGHT: when a site offers nothing that low, the smallest it has
-const capped = (height: number) => `bv*[height<=${height}]+ba/b[height<=${height}]/wv*+ba/w`
-
-export const videoArgs = (height: number = FREE_MAX_HEIGHT): string[] =>
-  height < FREE_MAX_HEIGHT
-    ? ['-f', `bv*[height=${height}]+ba/b[height=${height}]/${capped(height)}`, ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
-    : ['-f', `bv*[height=${FREE_MAX_HEIGHT}]+ba/b[height=${FREE_MAX_HEIGHT}]/${capped(FREE_MAX_HEIGHT)}`, ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
+export const videoArgs = (height?: number): string[] =>
+  height
+    ? ['-f', `bv*[height=${height}]+ba/b[height=${height}]/bv*[height<=${height}]+ba/b`, ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
+    : ['-f', 'bv*+ba/b', ...COMPATIBLE_SORT, '--merge-output-format', 'mp4']
 
 export const AUDIO_MP3 = ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0']
 export const AUDIO_M4A = ['-f', 'ba[ext=m4a]/ba/b', '-x', '--audio-format', 'm4a']
 
-/** Best ≤ height (never above FREE_MAX_HEIGHT), when the vessel is chosen before the formats are known. */
-export function capChoice(wanted: number | 'best' | 'mp3' | 'm4a'): DownloadChoice {
-  if (wanted === 'mp3') return {label: 'audio · mp3', kind: 'audio', args: AUDIO_MP3, suffix: ''}
-  if (wanted === 'm4a') return {label: 'audio · m4a', kind: 'audio', args: AUDIO_M4A, suffix: ''}
-  const height = wanted === 'best' ? FREE_MAX_HEIGHT : Math.min(wanted, FREE_MAX_HEIGHT)
+/** Best ≤ height, for batches and playlists where each item differs. */
+export function capChoice(height: number | 'best' | 'mp3' | 'm4a'): DownloadChoice {
+  if (height === 'mp3') return {label: 'audio · mp3', kind: 'audio', args: AUDIO_MP3, suffix: ''}
+  if (height === 'm4a') return {label: 'audio · m4a', kind: 'audio', args: AUDIO_M4A, suffix: ''}
+  if (height === 'best') return {label: 'best · mp4', kind: 'video', args: videoArgs(), suffix: ''}
   return {
     label: `≤ ${height}p · mp4`,
     kind: 'video',
-    args: ['-f', capped(height), ...COMPATIBLE_SORT, '--merge-output-format', 'mp4'],
+    args: ['-f', `bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`, ...COMPATIBLE_SORT, '--merge-output-format', 'mp4'],
     suffix: '',
     height,
   }
 }
+
+// ---------------------------------------------------------------------------
+// audio tracks (YouTube's original, dubbed and described audio)
+
+export type AudioTrackKind = 'original' | 'dubbed' | 'auto-dubbed' | 'descriptive' | 'other'
+
+/** One audio track a video offers, as yt-dlp describes it. Only what the metadata says: an unmarked track is 'other', never guessed "dubbed". */
+export type AudioTrack = {
+  /** the language, plus "~descriptive" for the described one: what the format filter selects */
+  id: string
+  language: string
+  /** "English (US)", "French": YouTube's own name, else the language's */
+  name: string
+  kind: AudioTrackKind
+  /** the one YouTube plays first */
+  isDefault: boolean
+}
+
+const languageNames = (() => {
+  try {
+    return new Intl.DisplayNames(['en'], {type: 'language'})
+  } catch {
+    return undefined
+  }
+})()
+
+function trackKind(f: RawFormat): AudioTrackKind {
+  const note = f.format_note ?? ''
+  if (/descriptive|audio description/i.test(note)) return 'descriptive'
+  if (/dubbed[- ]auto|auto[- ]?dubbed/i.test(note)) return 'auto-dubbed'
+  if (/dubbed/i.test(note)) return 'dubbed'
+  if (f.language_preference === 10 || /\boriginal\b/i.test(note)) return 'original'
+  return 'other'
+}
+
+function trackName(f: RawFormat): string {
+  // "English (US) original (default), low" → "English (US)"
+  const fromNote = (f.format_note ?? '')
+    .split(',')[0]!
+    .replace(/\((default|original|dubbed-auto|dubbed|descriptive)\)/gi, '')
+    .replace(/\b(original|default|dubbed-auto|dubbed|descriptive)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (fromNote && !/^(low|medium|high|ultralow|tiny)$/i.test(fromNote)) return fromNote
+  try {
+    return languageNames?.of(f.language!) ?? f.language!
+  } catch {
+    return f.language!
+  }
+}
+
+/**
+ * The audio tracks of a video: one per language (a described one apart),
+ * the original first, then the default, then by name. Empty when there is
+ * only one: then nothing needs choosing.
+ */
+export function audioTracks(info: VideoInfo): AudioTrack[] {
+  const byId = new Map<string, AudioTrack>()
+  for (const f of info.formats ?? []) {
+    if (!f.language || !f.acodec || f.acodec === 'none' || (f.vcodec && f.vcodec !== 'none')) continue
+    const kind = trackKind(f)
+    const id = kind === 'descriptive' ? `${f.language}~descriptive` : f.language
+    const isDefault = /\bdefault\b/i.test(f.format_note ?? '')
+    const known = byId.get(id)
+    if (known) {
+      // the strongest word any of its formats carries
+      if (known.kind === 'other' && kind !== 'other') known.kind = kind
+      known.isDefault ||= isDefault
+      continue
+    }
+    byId.set(id, {id, language: f.language, name: trackName(f), kind, isDefault})
+  }
+  const tracks = [...byId.values()]
+  if (tracks.length < 2) return []
+  const rank = (t: AudioTrack) => (t.kind === 'original' ? 0 : t.isDefault ? 1 : 2)
+  return tracks.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+}
+
+/** The track a draw takes when nobody chooses: the original, else YouTube's default. */
+export const defaultAudioTrack = (tracks: AudioTrack[]): AudioTrack | undefined => tracks.find(t => t.kind === 'original') ?? tracks.find(t => t.isDefault) ?? tracks[0]
+
+/** A plain description of a track, for labels: "French · dubbed", "English (US) · original". */
+export function trackLabel(track: AudioTrack): string {
+  const word = {original: 'original', dubbed: 'dubbed', 'auto-dubbed': 'auto-dubbed', descriptive: 'audio description', other: ''}[track.kind]
+  return word ? `${track.name} · ${word}` : track.name
+}
+
+/** yt-dlp's format filter for one track: its language, and described or not. */
+function trackFilter(track: AudioTrack): string {
+  const language = track.language.replace(/[^\w-]/g, '')
+  return `[language=${language}][format_note${track.kind === 'descriptive' ? '' : '!'}*=descriptive]`
+}
+
+/**
+ * The same vessel, with this audio track. Every audio selector gets the
+ * track's filter, and the fallbacks that could bring another language (a
+ * single file with its own sound) are dropped: when the track is gone, the
+ * draw fails and says so instead of drawing another language.
+ */
+export function withAudioTrack(choice: DownloadChoice, track: AudioTrack): DownloadChoice {
+  if (choice.kind !== 'video' && choice.kind !== 'audio') return choice
+  const at = choice.args.indexOf('-f')
+  if (at < 0) return choice
+  const filter = trackFilter(track)
+  const spec = choice.args[at + 1]!
+    .split('/')
+    .filter(alt => /(^|\+)ba(\*|\[|$)/.test(alt))
+    .map(alt => alt.replace(/(^|\+)ba(\*?)((?:\[[^\]]*\])*)/g, (_, lead: string, star: string, filters: string) => `${lead}ba${star}${filters}${filter}`))
+    .join('/')
+  if (!spec) return choice
+  const args = [...choice.args]
+  args[at + 1] = spec
+  const tag = `${track.language}${track.kind === 'descriptive' ? ' described' : ''}`
+  return {...choice, args, label: `${choice.label} · ${trackLabel(track)} audio`, suffix: `${choice.suffix} [${tag}]`, audioTrack: track.id}
+}
+
+/** yt-dlp's words for a vanished track, in Axive's. */
+export const TRACK_GONE = 'that audio track is not offered for this video any more. offer the link again and choose another'
 
 export function buildChoices(info: VideoInfo): DownloadChoice[] {
   const formats = info.formats ?? []
@@ -306,7 +429,7 @@ export function buildChoices(info: VideoInfo): DownloadChoice[] {
   const audioSize = sizeOf(bestAudio)
 
   const videos = formats.filter(f => f.vcodec && f.vcodec !== 'none' && f.height)
-  const heights = [...new Set(videos.map(f => f.height as number))].filter(h => h <= FREE_MAX_HEIGHT).sort((a, b) => b - a)
+  const heights = [...new Set(videos.map(f => f.height as number))].sort((a, b) => b - a)
 
   for (const height of heights.slice(0, MAX_VIDEO_CHOICES)) {
     const candidates = videos.filter(f => f.height === height)
@@ -319,7 +442,7 @@ export function buildChoices(info: VideoInfo): DownloadChoice[] {
   }
 
   if (choices.length === 0) {
-    choices.push({kind: 'video', label: `best ≤ ${FREE_MAX_HEIGHT}p · mp4`, args: videoArgs(), suffix: ''})
+    choices.push({kind: 'video', label: 'best available · mp4', args: videoArgs(), suffix: ''})
   }
 
   const audioSizeLabel = audioSize ? ` · ~${formatBytes(audioSize)}` : ''
@@ -327,13 +450,8 @@ export function buildChoices(info: VideoInfo): DownloadChoice[] {
   if (audioOnly.some(f => f.ext === 'm4a' || f.acodec?.startsWith('mp4a'))) {
     choices.push({kind: 'audio', label: `audio · m4a${audioSizeLabel}`, args: AUDIO_M4A, suffix: '', size: audioSize || undefined})
   }
-  return choices
-}
 
-/** The heights a video has above what Free draws (1440p, 4K, 8K): Axive draws those. */
-export function heightsAboveFree(info: VideoInfo): number[] {
-  const heights = (info.formats ?? []).filter(f => f.vcodec && f.vcodec !== 'none' && f.height && f.height > FREE_MAX_HEIGHT).map(f => f.height as number)
-  return [...new Set(heights)].sort((a, b) => b - a)
+  return choices
 }
 
 function scoreVideo(f: RawFormat): number {

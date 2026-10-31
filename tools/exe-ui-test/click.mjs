@@ -56,8 +56,8 @@ check('--version prints the version', /^\d+\.\d+\.\d+\s*$/.test(run('--version')
 const help = run('--help').stdout
 check('--help names Free and points at Axive', help.includes('axive free') && help.includes('axive.xyz') && !/—/.test(help))
 const notices = run('--notices').stdout
-check('--notices: GPL-3.0, the source, and each bundled program', notices.includes('GNU General Public License, version 3') && notices.includes('github.com/AxiveCuisine/axive-free') && /yt-dlp[\s\S]*FFmpeg[\s\S]*aria2[\s\S]*Node\.js/.test(notices) && !notices.includes('WebView2'))
-check('config refuses a third tunnel', run('config', 'set', 'tunnels', '3').status === 1)
+check('--notices: GPL-3.0, the source, and each bundled program', notices.includes('GNU General Public License, version 3') && notices.includes('github.com/AxiveCuisine/axive-free') && /yt-dlp[\s\S]*FFmpeg[\s\S]*aria2[\s\S]*Node\.js/.test(notices) && notices.includes('WebView2') && notices.includes('Cormorant'))
+check('config takes a third tunnel, refuses a fourth', run('config', 'set', 'tunnels', '3').status === 0 && run('config', 'set', 'tunnels', '4').status === 1)
 
 const COLS = 140
 const ROWS = 46
@@ -136,7 +136,7 @@ try {
   check('home: no em dash on screen', !f0.includes('—'))
 
   term.write('?')
-  check('? opens the sheet with Free\'s doors', await waitFor(f => f.includes('every key, and every door') && f.includes('the full table: 8K'), 5000))
+  check('? opens the sheet with Free\'s doors', await waitFor(f => f.includes('every key, and every door') && f.includes('the full table: playlists') && f.includes('the window'), 5000))
   await esc()
   check('the sheet: esc returns home', await waitFor(homeMark, 5000))
 
@@ -161,14 +161,14 @@ try {
 
   // the Axive page: from the header chip, plainly what it adds
   await click('Axive', 0)
-  const page = await waitFor(f => f.includes('free · axive') && f.includes('1440p, 4k and 8k') && f.includes('open axive.xyz') && f.includes('$7.99 once'), 8000)
+  const page = await waitFor(f => f.includes('free · axive') && f.includes('playlists') && f.includes('up to 8k, audio tracks') && f.includes('open axive.xyz') && f.includes('$7.99 once'), 8000)
   check('the Axive page lists what the full Axive adds', page, page ? '' : tail())
   await backHome()
 
-  // settings: two tunnels at most, the speed limit is one for everything
+  // settings: three tunnels at most, the speed limit is one for everything
   await click('settings')
   await waitFor('renewal & tools', 8000)
-  check('settings: tunnels offer 1 or 2', frame().includes('tunnels') && !/tunnels\s+[‹<]?\s*[34]\b/.test(frame()))
+  check('settings: tunnels offer 1 to 3', frame().includes('tunnels') && !/tunnels\s+[‹<]?\s*[4-9]\b/.test(frame()))
   check('settings: simple language sits above the tabs', frame().indexOf('simple language') < frame().indexOf('renewal & tools'))
   await click('download manager', 1)
   check('settings: the download manager tab', await waitFor(f => f.includes('connections') && f.includes('same name'), 5000), tail())
@@ -184,12 +184,12 @@ try {
   check('a Spotify link: Spotify comes with Axive', await waitFor('Spotify tracks, albums and playlists come with Axive', 8000), tail())
   await backHome()
 
-  // a real draw: a short public video, capped at 1080p, lands in the folder
+  // a real draw: a short public video, every quality it has, lands in the folder
   await typeText('https://www.youtube.com/watch?v=jNQXAC9IVRw')
   term.write('\r')
   const vessels = await waitFor(f => f.includes('Vessels') && f.includes('Me at the zoo'), 60000)
   check('a YouTube link opens its vessels', vessels, vessels ? '' : tail())
-  check('the vessels stop at 1080p', vessels && !/\b(1440|2160|4320)p\b/.test(frame()) && /mp3/i.test(frame()))
+  check('the vessels: no cap line, audio offered', vessels && !/Axive draws those|1080p at most/i.test(frame()) && /mp3/i.test(frame()))
   term.write('\r')
   const drawn = await waitFor(f => f.includes('received.'), 120000)
   const file = fs.readdirSync(dl).find(n => /Me at the zoo/.test(n) && !/\.part$/.test(n))

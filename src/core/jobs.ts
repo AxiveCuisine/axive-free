@@ -11,9 +11,10 @@ import {paths, readJson, writeFileAtomic} from './paths.js'
 import {evaluateQueues, freeSlots, queueIdFor, registerMember} from './queues.js'
 import {openPath, revealPath} from './reveal.js'
 import {createStore} from './store.js'
-import {tools} from './tools.js'
+import {tools, whenToolsReady} from './tools.js'
 import {
   CancelledError,
+  TRACK_GONE,
   ToolError,
   download,
   removePartials,
@@ -131,6 +132,7 @@ async function runJob(id: string): Promise<void> {
     },
   }
   try {
+    await whenToolsReady()
     const t = tools()
     let filepath: string | undefined
     let skipped = false
@@ -172,7 +174,9 @@ async function runJob(id: string): Promise<void> {
       update(id, reason?.pause ? {state: 'paused', stage: 'paused'} : {state: 'cancelled', stage: 'cancelled', finishedAt: Date.now()})
       return
     }
-    const classified = classify(error)
+    const found = classify(error)
+    // a chosen audio track that is gone fails as such, never as another language
+    const classified = found.kind === 'format' && job.choice.audioTrack ? {...found, title: 'that audio track is not offered', detail: TRACK_GONE} : found
     const latest = getJob(id)!
     if (classified.transient && latest.attempt <= getConfig().retries) {
       const wait = backoffMs(latest.attempt, classified.kind)
@@ -306,7 +310,28 @@ export function restoreQueue(): number {
     .filter(job => job && typeof job.url === 'string' && job.choice && typeof job.folder === 'string')
     .map(job => ({...job, state: 'paused', stage: 'paused', attempt: 0}))
   jobsStore.set(jobs => [...jobs, ...restored])
+  // Axive Free moved here from its other door: what was moving there moves on here
+  const carried = new Set(readJson<string[]>(carryFile(), []))
+  fs.rmSync(carryFile(), {force: true})
+  for (const job of restored) if (carried.has(job.id)) resumeJob(job.id)
   pump()
-  return restored.length
+  return restored.filter(job => job.state === 'paused' && !carried.has(job.id)).length
+}
+
+const carryFile = () => path.join(paths.root, 'carry-on.json')
+
+/** Before Axive Free moves to its other door (the window or the terminal): save the queue, and which draws were moving or waiting, to carry them on there. */
+export function carryOver(): void {
+  const moving = jobsStore
+    .get()
+    .filter(job => job.state === 'running' || job.state === 'queued')
+    .map(job => job.id)
+  try {
+    if (moving.length) writeFileAtomic(carryFile(), JSON.stringify(moving))
+  } catch {
+    // they come back paused instead
+  }
+  for (const job of jobsStore.get()) if (job.state === 'running') pauseJob(job.id)
+  persist()
 }
 

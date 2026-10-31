@@ -11,8 +11,7 @@ import {ago, findDuplicate, ledgerStore} from '../../core/ledger.js'
 import {detectPlatform} from '../../core/platforms.js'
 import {prettyPath} from '../../core/paths.js'
 import {useStore} from '../../core/store.js'
-import {ONLY_IN_AXIVE} from '../../core/brand.js'
-import {buildChoices, heightsAboveFree, type DownloadChoice} from '../../core/ytdlp.js'
+import {audioTracks, buildChoices, trackLabel, withAudioTrack, type DownloadChoice} from '../../core/ytdlp.js'
 import {useSize} from '../components/fullscreen.js'
 import {List, ListRow} from '../components/list.js'
 import {Panel} from '../components/panel.js'
@@ -81,8 +80,10 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
   })
 
   const platform = detectPlatform(info.webpage_url ?? probe.url)
-  // what this video also has above 1080p: Axive draws it
-  const above = useMemo(() => heightsAboveFree(info), [info])
+  // several audio tracks (YouTube dubs): the original first; another one is chosen with the "sound" button
+  const tracks = useMemo(() => audioTracks(info), [info])
+  const [trackIndex, setTrackIndex] = useState(0)
+  const track = trackIndex > 0 ? tracks[trackIndex] : undefined
   const duplicate = config.warnDuplicates ? findDuplicate(info.extractor_key?.toLowerCase(), info.id, probe.url) : undefined
   const duplicateExists = duplicate?.filepath ? fs.existsSync(duplicate.filepath) : false
   const contentWidth = Math.max(40, Math.min(columns - 4, 100))
@@ -92,8 +93,10 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
   const tooBig = highlighted?.size && free !== undefined && highlighted.size * 1.05 > free
 
   const draw = (index: number) => {
-    const choice = choices[index]
-    if (!choice) return
+    const picked = choices[index]
+    if (!picked) return
+    // never another language in its place: the filter makes a vanished track fail, and say so
+    const choice = track ? withAudioTrack(picked, track) : picked
     queueDraw(
       [
         {
@@ -150,15 +153,7 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
               ) : null}
             </Box>
           ) : null}
-          {above.length ? (
-            <Box>
-              <Text color={theme.accent}>{G.star} </Text>
-              <Quiet>{`it also comes in ${above.map(h => (h >= 4320 ? '8K' : h >= 2160 ? '4K' : `${h}p`)).join(', ')}. `}</Quiet>
-              <Action onPress={() => app.nav.push({name: 'axive', why: ONLY_IN_AXIVE.quality})} hint="what the full Axive draws">
-                Axive draws those
-              </Action>
-            </Box>
-          ) : null}
+          {tracks.length > 1 ? <Text color={track ? theme.accent : theme.gray}>{`${G.audio} sound: ${trackLabel(tracks[trackIndex]!)}${track ? '' : ` · ${tracks.length} tracks`}`}</Text> : null}
         </Box>
         <Panel title="Vessels" width={42}>
           <List
@@ -174,6 +169,9 @@ export function PickingScreen({probe, animated}: {probe: VideoProbe; animated: b
       </Box>
       <Gap />
       <ButtonRow>
+        {tracks.length > 1 ? (
+          <Button compact label={`sound: ${tracks[trackIndex]!.name}`} onPress={() => setTrackIndex(i => (i + 1) % tracks.length)} hint={`${tracks.length} audio tracks: press to choose the next (${tracks.map(t => t.name).slice(0, 6).join(', ')}${tracks.length > 6 ? '…' : ''})`} />
+        ) : null}
         <Button compact label="back" onPress={() => app.nav.home(probe.url)} hint="esc" />
       </ButtonRow>
     </Box>

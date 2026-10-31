@@ -81,6 +81,9 @@ export function redact(text: string): string {
   // telegram bot tokens look like 123456789:AA…; discord webhooks carry their secret in the path
   out = out.replace(/\b\d{6,12}:[A-Za-z0-9_-]{30,}\b/g, '<bot-token>')
   out = out.replace(/(discord(?:app)?\.com\/api\/webhooks\/\d+\/)[A-Za-z0-9_-]+/gi, '$1<secret>')
+  // headers that carry credentials, however they were written: a raw line, --add-header, JSON
+  out = out.replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-auth-token|x-csrf-token)(["']?\s*[:=]\s*["']?)[^\r\n"']+/gi, '$1$2<secret>')
+  out = out.replace(/\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <secret>')
   // links keep their host, path and harmless parameters; signatures and tokens go
   out = out.replace(/\bhttps?:\/\/[^\s"'<>]+/g, url => {
     try {
@@ -93,11 +96,15 @@ export function redact(text: string): string {
       }
       parsed.username = ''
       parsed.password = ''
+      // a fragment never reaches a server but often holds the token (OAuth's #access_token=…)
+      if (parsed.hash) parsed.hash = '…'
       return parsed.toString()
     } catch {
       return url
     }
   })
+  // secrets written as key=value outside a link (a form body, a command line)
+  out = out.replace(/\b(access_token|refresh_token|id_token|client_secret|api_?key|password|passwd|secret|sig|signature|token)=([^&\s"']+)/gi, (all, key: string, value: string) => (value === '…' || value.startsWith('%E2%80%A6') ? all : `${key}=<secret>`))
   // private network addresses
   out = out.replace(/\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b/g, '<lan-ip>')
   return out
